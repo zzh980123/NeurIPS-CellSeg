@@ -1,0 +1,1 @@
+cd .. && pwd && python ./data/pre_process_3class.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Labeled

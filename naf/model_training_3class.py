@@ -6,6 +6,14 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 
 import argparse
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+
+import skimage.measure
+
+from models.swinunetrv3 import SwinUNETRV3
+
+from transformers.utils import ConditionAddChannelFirstd, ConditionAddChannelLastd, ConditionChannelNumberd
+from monai.utils import GridSampleMode
 
 join = os.path.join
 
@@ -15,7 +23,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 import monai
-from monai.data import decollate_batch, PILReader
+from monai.data import decollate_batch, PILReader, NibabelReader
 from monai.inferers import sliding_window_inference
 from monai.metrics import DiceMetric
 from monai.transforms import (
@@ -36,7 +44,8 @@ from monai.transforms import (
     RandGaussianSmoothd,
     RandHistogramShiftd,
     EnsureTyped,
-    EnsureType,
+    EnsureType, EnsureChannelFirstd,
+    Rand2DElasticd, GaussianSmoothd, GaussianSmooth
 )
 from monai.visualize import plot_2d_or_3d_image
 import matplotlib.pyplot as plt
@@ -44,6 +53,9 @@ from datetime import datetime
 import shutil
 
 from models.unetr2d import UNETR2D
+from models.swinunetrv2_DFC import SwinUNETRV2_DFC
+from models.swinunetrv2 import SwinUNETRV2
+from monai.networks.nets import SwinUNETR
 
 print("Successfully imported all requirements!")
 
@@ -58,7 +70,7 @@ def main():
         help="training data path; subfolders: images, labels",
     )
     parser.add_argument(
-        "--work_dir", default="./baseline/work_dir/baseline_reproduce", help="path where to save models and logs"
+        "--work_dir", default="./naf/work_dir/view11_elastic", help="path where to save models and logs"
     )
     parser.add_argument("--seed", default=2022, type=int)
     # parser.add_argument("--resume", default=False, help="resume from checkpoint")
@@ -66,7 +78,7 @@ def main():
 
     # Model parameters
     parser.add_argument(
-        "--model_name", default="swinunetr", help="select mode: unet, unetr, swinunetr"
+        "--model_name", default="swinunetrv2", help="select mode: unet, unetr, swinunetr， swinunetrv2"
     )
     parser.add_argument("--num_class", default=3, type=int, help="segmentation classes")
     parser.add_argument(
@@ -95,6 +107,7 @@ def main():
     gt_path = join(args.data_path, "labels")
 
     img_names = sorted(os.listdir(img_path))
+    # modified to tiff
     gt_names = [img_name.split(".")[0] + "_label.png" for img_name in img_names]
     img_num = len(img_names)
     val_frac = 0.1
@@ -122,9 +135,15 @@ def main():
                 keys=["img", "label"], reader=PILReader, dtype=np.uint8
             ),  # image three channels (H, W, 3); label: (H, W)
             AddChanneld(keys=["label"], allow_missing_keys=True),  # label: (1, H, W)
-            AsChannelFirstd(
-                keys=["img"], channel_dim=-1, allow_missing_keys=True
+            # ConditionAddChannelLastd(
+            #     keys=["img"], target_dims=2, allow_missing_keys=True
+            # ),
+            EnsureChannelFirstd(
+                keys=["img"], strict_check=False
             ),  # image: (3, H, W)
+            ConditionChannelNumberd(
+                keys=["img"], target_dim=0, channel_num=3, allow_missing_keys=True
+            ),
             ScaleIntensityd(
                 keys=["img"], allow_missing_keys=True
             ),  # Do not scale label
@@ -134,6 +153,7 @@ def main():
             ),
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
             RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
+            Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
@@ -154,12 +174,22 @@ def main():
         [
             LoadImaged(keys=["img", "label"], reader=PILReader, dtype=np.uint8),
             AddChanneld(keys=["label"], allow_missing_keys=True),
-            AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
+            # ConditionAddChannelLastd(
+            #     keys=["img"], target_dims=2, allow_missing_keys=True
+            # ),
+            EnsureChannelFirstd(
+                keys=["img"],
+            ),  # image: (3, H, W)
+            ConditionChannelNumberd(
+                keys=["img"], target_dim=0, channel_num=3, allow_missing_keys=True
+            ),
+            # AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
             ScaleIntensityd(keys=["img"], allow_missing_keys=True),
             # AsDiscreted(keys=['label'], to_onehot=3),
             EnsureTyped(keys=["img", "label"]),
         ]
     )
+
 
     #% define dataset, data loader
     check_ds = monai.data.Dataset(data=train_files, transform=train_transforms)
@@ -196,7 +226,7 @@ def main():
     )
     post_gt = Compose([EnsureType(), AsDiscrete(to_onehot=None)])
     # create UNet, DiceLoss and Adam optimizer
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     if args.model_name.lower() == "unet":
         model = monai.networks.nets.UNet(
             spatial_dims=2,
@@ -231,9 +261,40 @@ def main():
             spatial_dims=2,
         ).to(device)
 
-    loss_function = monai.losses.DiceFocalLoss(softmax=True)
+    if args.model_name.lower() == "swinunetrv2":
+        model = SwinUNETRV2(
+            img_size=(args.input_size, args.input_size),
+            in_channels=3,
+            # norm_name="batch",
+            out_channels=args.num_class,
+            feature_size=24,  # should be divisible by 12
+            spatial_dims=2,
+        ).to(device)
+
+    if args.model_name.lower() == "swinunetrv2_dfc":
+        model = SwinUNETRV2_DFC(
+            img_size=(args.input_size, args.input_size),
+            in_channels=3,
+            # norm_name="batch",
+            out_channels=args.num_class,
+            feature_size=24,  # should be divisible by 12
+            spatial_dims=2,
+        ).to(device)
+
+    if args.model_name.lower() == "swinunetrv3":
+        model = SwinUNETRV3(
+            img_size=(args.input_size, args.input_size),
+            in_channels=3,
+            norm_name="batch",
+            out_channels=args.num_class,
+            feature_size=24,  # should be divisible by 12
+            spatial_dims=2,
+        ).to(device)
+
+    loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.25, 0.25, 0.5]).to(device))
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
+    smooth_transformer = GaussianSmooth(sigma=1)
 
     # start a typical PyTorch training
     max_epochs = args.max_epochs
@@ -243,6 +304,7 @@ def main():
     best_metric_epoch = -1
     epoch_loss_values = list()
     metric_values = list()
+    torch.autograd.set_detect_anomaly(True)
     writer = SummaryWriter(model_path)
     for epoch in range(1, max_epochs):
         model.train()
@@ -256,6 +318,10 @@ def main():
             labels_onehot = monai.networks.one_hot(
                 labels, args.num_class
             )  # (b,cls,256,256)
+
+            # smooth edge
+            labels_onehot[:, 2, ...] = smooth_transformer(labels_onehot[:, 2, ...])
+
             loss = loss_function(outputs, labels_onehot)
             loss.backward()
             optimizer.step()

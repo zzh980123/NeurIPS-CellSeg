@@ -76,6 +76,11 @@ def main():
     os.makedirs(pre_gt_path, exist_ok=True)
     
     for img_name, gt_name in zip(tqdm(img_names), gt_names):
+
+        save_img = join(target_path, 'images', img_name.split('.')[0] + '.png')
+        if os.path.exists(save_img):
+            continue
+
         if img_name.endswith('.tif') or img_name.endswith('.tiff'):
             img_data = tif.imread(join(img_path, img_name))
         else:

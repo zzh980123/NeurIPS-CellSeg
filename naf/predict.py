@@ -1,5 +1,9 @@
 import os
 
+from models.swinunetrv2 import SwinUNETRV2
+from models.swinunetrv2_DFC import SwinUNETRV2_DFC
+from models.swinunetrv3 import SwinUNETRV3
+
 join = os.path.join
 import argparse
 import numpy as np
@@ -25,13 +29,13 @@ def normalize_channel(img, lower=1, upper=99):
 def main():
     parser = argparse.ArgumentParser('Baseline for Microscopy image segmentation', add_help=False)
     # Dataset parameters
-    parser.add_argument('-i', '--input_path', default='/media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/', type=str, help='training data path; subfolders: images, labels')
-    parser.add_argument("-o", '--output_path', default='./outputs2', type=str, help='output path')
-    parser.add_argument('--model_path', default='./work_dir/swinunetr_3class', help='path where to save models and segmentation results')
+    parser.add_argument('-i', '--input_path', default='./inputs', type=str, help='training data path; subfolders: images, labels')
+    parser.add_argument("-o", '--output_path', default='./outputs', type=str, help='output path')
+    parser.add_argument('--model_path', default='./work_dir/swinunetrv2_3class', help='path where to save models and segmentation results')
     parser.add_argument('--show_overlay', required=False, default=False, action="store_true", help='save segmentation overlay')
 
     # Model parameters
-    parser.add_argument('--model_name', default='swinunetr', help='select mode: unet, unetr, swinunetr')
+    parser.add_argument('--model_name', default='swinunetrv2', help='select mode: unet, unetr, swinunetr，swinunetrv2')
     parser.add_argument('--num_class', default=3, type=int, help='segmentation classes')
     parser.add_argument('--input_size', default=256, type=int, help='segmentation classes')
     args = parser.parse_args()
@@ -74,6 +78,34 @@ def main():
             out_channels=args.num_class,
             feature_size=24,  # should be divisible by 12
             spatial_dims=2
+        ).to(device)
+
+    if args.model_name.lower() == "swinunetrv2":
+        model = SwinUNETRV2(
+            img_size=(args.input_size, args.input_size),
+            in_channels=3,
+            out_channels=args.num_class,
+            feature_size=24,  # should be divisible by 12
+            spatial_dims=2,
+        ).to(device)
+    if args.model_name.lower() == "swinunetrv3":
+        model = SwinUNETRV3(
+            img_size=(args.input_size, args.input_size),
+            in_channels=3,
+            norm_name="batch",
+            out_channels=args.num_class,
+            feature_size=24,  # should be divisible by 12
+            spatial_dims=2,
+        ).to(device)
+
+    if args.model_name.lower() == "swinunetrv2_dfc":
+        model = SwinUNETRV2_DFC(
+            img_size=(args.input_size, args.input_size),
+            in_channels=3,
+            # norm_name="batch",
+            out_channels=args.num_class,
+            feature_size=24,  # should be divisible by 12
+            spatial_dims=2,
         ).to(device)
 
     checkpoint = torch.load(join(args.model_path, 'best_Dice_model.pth'), map_location=torch.device(device))
