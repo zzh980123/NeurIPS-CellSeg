@@ -1,1 +1,1 @@
-cd .. && pwd && python ./naf/model_training_3class.py --data_path ./data/Train_Pre_3class --work_dir ./naf/work_dir/swinunetrv2_dfc
+cd .. && pwd && python ./naf/model_training_3class.py --data_path ./data/Train_Pre_3class --work_dir ./naf/work_dir/swinunetr_dfc_v2 --model_name swinunetr_dfc_v2
