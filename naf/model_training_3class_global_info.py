@@ -7,11 +7,12 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
 from model_selector import model_factory
+from my_slid_window.sliding_window_inferebce_with_global_info import sliding_window_inference_g
 
-from transformers.utils import ConditionChannelNumberd
+from transformers.utils import ConditionChannelNumberd, FFTd
 from monai.utils import GridSampleMode
 
 join = os.path.join
@@ -23,7 +24,6 @@ from torch.utils.tensorboard import SummaryWriter
 
 import monai
 from monai.data import decollate_batch, PILReader
-from monai.inferers import sliding_window_inference
 from monai.metrics import DiceMetric
 from monai.transforms import (
     Activations,
@@ -43,7 +43,7 @@ from monai.transforms import (
     RandHistogramShiftd,
     EnsureTyped,
     EnsureType, EnsureChannelFirstd,
-    Rand2DElasticd, GaussianSmooth
+    Rand2DElasticd, GaussianSmooth, Resized
 )
 from monai.visualize import plot_2d_or_3d_image
 from datetime import datetime
@@ -110,11 +110,11 @@ def main():
     val_indices = indices[:val_split]
 
     train_files = [
-        {"img": join(img_path, img_names[i]), "label": join(gt_path, gt_names[i])}
+        {"img": join(img_path, img_names[i]), "label": join(gt_path, gt_names[i]), "gimg": join(img_path, img_names[i])}
         for i in train_indices
     ]
     val_files = [
-        {"img": join(img_path, img_names[i]), "label": join(gt_path, gt_names[i])}
+        {"img": join(img_path, img_names[i]), "label": join(gt_path, gt_names[i]), "gimg": join(img_path, img_names[i])}
         for i in val_indices
     ]
     print(
@@ -124,29 +124,34 @@ def main():
     train_transforms = Compose(
         [
             LoadImaged(
-                keys=["img", "label"], reader=PILReader, dtype=np.uint8
+                keys=["img", "label", "gimg"], reader=PILReader, dtype=np.uint8
             ),  # image three channels (H, W, 3); label: (H, W)
             AddChanneld(keys=["label"], allow_missing_keys=True),  # label: (1, H, W)
             # ConditionAddChannelLastd(
             #     keys=["img"], target_dims=2, allow_missing_keys=True
             # ),
             EnsureChannelFirstd(
-                keys=["img"], strict_check=False
+                keys=["img", "gimg"], strict_check=False
             ),  # image: (3, H, W)
             ConditionChannelNumberd(
-                keys=["img"], target_dim=0, channel_num=3, allow_missing_keys=True
+                keys=["img", "gimg"], target_dim=0, channel_num=3, allow_missing_keys=True
             ),
             ScaleIntensityd(
-                keys=["img"], allow_missing_keys=True
+                keys=["img", "gimg"], allow_missing_keys=True
             ),  # Do not scale label
-            SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
+            SpatialPadd(keys=["img", "label", "gimg"], spatial_size=args.input_size),
+            Resized(keys=["gimg"], spatial_size=(args.input_size, args.input_size)),
+            FFTd(keys=["gimg"], hf_mask_percent=0.1),
+            ScaleIntensityd(
+                keys=["gimg"], allow_missing_keys=True
+            ),
             RandSpatialCropd(
                 keys=["img", "label"], roi_size=args.input_size, random_size=False
             ),
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
             RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
             Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
-            # # intensity transform
+            # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
             RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2)),
@@ -158,25 +163,33 @@ def main():
                 max_zoom=1.5,
                 mode=["area", "nearest"],
             ),
-            EnsureTyped(keys=["img", "label"]),
+            EnsureTyped(keys=["img", "label", "gimg"]),
         ]
     )
 
     val_transforms = Compose(
         [
-            LoadImaged(keys=["img", "label"], reader=PILReader, dtype=np.uint8),
+            LoadImaged(keys=["img", "label", "gimg"], reader=PILReader, dtype=np.uint8),
             AddChanneld(keys=["label"], allow_missing_keys=True),
             # ConditionAddChannelLastd(
             #     keys=["img"], target_dims=2, allow_missing_keys=True
             # ),
             EnsureChannelFirstd(
-                keys=["img"],
+                keys=["img", "gimg"],
             ),  # image: (3, H, W)
             ConditionChannelNumberd(
-                keys=["img"], target_dim=0, channel_num=3, allow_missing_keys=True
+                keys=["img", "gimg"], target_dim=0, channel_num=3, allow_missing_keys=True
             ),
             # AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
             ScaleIntensityd(keys=["img"], allow_missing_keys=True),
+            Resized(keys=["gimg"], spatial_size=args.input_size),
+            FFTd(keys=["gimg"], hf_mask_percent=0.1),
+            ScaleIntensityd(
+                keys=["gimg"], allow_missing_keys=True
+            ),
+            RandSpatialCropd(
+                keys=["img", "label"], roi_size=args.input_size, random_size=False
+            ),
             # AsDiscreted(keys=['label'], to_onehot=3),
             EnsureTyped(keys=["img", "label"]),
         ]
@@ -190,6 +203,8 @@ def main():
         "sanity check:",
         check_data["img"].shape,
         torch.max(check_data["img"]),
+        check_data["gimg"].shape,
+        torch.max(check_data["gimg"]),
         check_data["label"].shape,
         torch.max(check_data["label"]),
     )
@@ -219,7 +234,7 @@ def main():
     # create UNet, DiceLoss and Adam optimizer
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = model_factory(args.model_name.lower(), device, args, in_channels=3)
+    model = model_factory(args.model_name.lower(), device, args, in_channels=4)
 
     loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
     # loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.25, 0.25, 0.5]).to(device))
@@ -242,11 +257,11 @@ def main():
         model.train()
         epoch_loss = 0
         for step, batch_data in enumerate(train_loader, 1):
-            inputs, labels = batch_data["img"].to(device), batch_data["label"].to(
+            inputs, labels, global_info = batch_data["img"].to(device), batch_data["label"].to(
                 device
-            )
+            ), batch_data["gimg"].to(device)
             optimizer.zero_grad()
-            outputs = model(inputs)
+            outputs = model(torch.concat([inputs, global_info], dim=1))
             labels_onehot = monai.networks.one_hot(
                 labels, args.num_class
             )  # (b,cls,256,256)
@@ -278,16 +293,16 @@ def main():
                 val_labels = None
                 val_outputs = None
                 for val_data in val_loader:
-                    val_images, val_labels = val_data["img"].to(device), val_data[
+                    val_images, val_labels, val_ginfo = val_data["img"].to(device), val_data[
                         "label"
-                    ].to(device)
+                    ].to(device), val_data["gimg"].to(device)
                     val_labels_onehot = monai.networks.one_hot(
                         val_labels, args.num_class
                     )
                     roi_size = (256, 256)
                     sw_batch_size = 4
-                    val_outputs = sliding_window_inference(
-                        val_images, roi_size, sw_batch_size, model
+                    val_outputs = sliding_window_inference_g(
+                        val_images, roi_size, sw_batch_size, model, inputs_concat_key="gimg", gimg=val_ginfo
                     )
                     val_outputs = [post_pred(i) for i in decollate_batch(val_outputs)]
                     val_labels_onehot = [

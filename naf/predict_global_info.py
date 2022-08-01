@@ -4,6 +4,8 @@ from model_selector import model_factory
 from models.swinunetrv2 import SwinUNETRV2
 from models.swinunetrv2_DFC import SwinUNETRV2_DFC
 from models.swinunetrv3 import SwinUNETRV3
+from my_slid_window.sliding_window_inferebce_with_global_info import sliding_window_inference_g
+from transformers.utils import fft_highpass_filter
 
 join = os.path.join
 import argparse
@@ -15,7 +17,7 @@ from models.unetr2d import UNETR2D
 import time
 from skimage import io, segmentation, morphology, measure, exposure
 import tifffile as tif
-
+from monai.transforms import ResizeD
 
 def normalize_channel(img, lower=1, upper=99):
     non_zero_vals = img[np.nonzero(img)]
@@ -25,6 +27,9 @@ def normalize_channel(img, lower=1, upper=99):
     else:
         img_norm = img
     return img_norm.astype(np.uint8)
+
+def resize(img, new_size):
+    return ResizeD({"img": img}, spatial_size=new_size, align_corners=True)["img"]
 
 
 def main():
@@ -47,8 +52,7 @@ def main():
     img_names = sorted(os.listdir(join(input_path)))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model = model_factory(args.model_name.lower(), device, args, in_channels=3)
+    model = model_factory(args.model_name.lower(), device, args, in_channels=4)
 
     checkpoint = torch.load(join(args.model_path, 'best_Dice_model.pth'), map_location=torch.device(device))
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -76,10 +80,13 @@ def main():
                 if len(img_channel_i[np.nonzero(img_channel_i)]) > 0:
                     pre_img_data[:, :, i] = normalize_channel(img_channel_i, lower=1, upper=99)
 
+            pre_img_data_global_info = resize(pre_img_data_global_info, roi_size)
+            pre_img_data_global_info = fft_highpass_filter(pre_img_data_global_info)
+
             t0 = time.time()
             test_npy01 = pre_img_data / np.max(pre_img_data)
             test_tensor = torch.from_numpy(np.expand_dims(test_npy01, 0)).permute(0, 3, 1, 2).type(torch.FloatTensor).to(device)
-            test_pred_out = sliding_window_inference(test_tensor, roi_size, sw_batch_size, model)
+            test_pred_out = sliding_window_inference_g(test_tensor, roi_size, sw_batch_size, model, inputs_concat_key="gimg", gimg=pre_img_data_global_info)
             test_pred_out = torch.nn.functional.softmax(test_pred_out, dim=1)  # (B, C, H, W)
             test_pred_npy = test_pred_out[0, 1].cpu().numpy()
             # convert probability map to binary mask and apply morphological postprocessing

@@ -19,7 +19,7 @@ from monai.utils import ensure_tuple_rep, optional_import
 rearrange, _ = optional_import("einops", name="rearrange")
 
 
-class SwinUNETR_DFCv2(nn.Module):
+class SwinUNETR_DFCv3(nn.Module):
     """
     Swin UNETR based on: "Hatamizadeh et al.,
     Swin UNETR: Swin Transformers for Semantic Segmentation of Brain Tumors in MRI Images
@@ -208,9 +208,10 @@ class SwinUNETR_DFCv2(nn.Module):
 
         # Use DFC
         self.decoder1 = UnetrUpBlockDFC(
-            shape=img_size,
             spatial_dims=spatial_dims,
+            shape=img_size,
             in_channels=feature_size,
+            dfc_rate=1.0,
             out_channels=feature_size,
             kernel_size=3,
             upsample_kernel_size=2,
@@ -907,13 +908,22 @@ class SpatialTransformer(nn.Module):
 
 class DeformableConvLayer(nn.Module):
 
-    def __init__(self, shape, in_channel, out_channel, kernel_size, stride, spatial_dims=2, max_view=11, sample_rate=0.366):
+    def __init__(self, shape, in_channel, out_channel, kernel_size, stride, spatial_dims=2, max_view=11, sample_rate=0.366, dfc_rate=1.0, in_channel_fold=True):
         super().__init__()
+        assert 0 <= dfc_rate <= 1 <= dfc_rate * out_channel
         self.in_channel = in_channel
         self.out_channel = out_channel
         self.kernel_size = kernel_size
         self.stride = stride
         self.max_view = max_view
+        self.dfc_rate = dfc_rate
+        self.in_channel_fold = in_channel_fold
+
+        if in_channel_fold:
+            self.ic_fd = Conv[Conv.CONV, spatial_dims](
+                in_channels=self.in_channel, out_channels=1, kernel_size=1, stride=1, padding=0
+            )
+            self.in_channel = 1
 
         self.group_size = max(int(((max_view // 2) ** 2) * sample_rate), 2)
 
@@ -922,14 +932,14 @@ class DeformableConvLayer(nn.Module):
         )
 
         self.conv = Conv[Conv.CONV, spatial_dims](
-            in_channels=in_channel, out_channels=out_channel, kernel_size=kernel_size, stride=kernel_size
+            in_channels=self.in_channel, out_channels=out_channel, kernel_size=kernel_size, stride=stride, padding=kernel_size // 2
         )
 
         self.trans = SpatialTransformer(shape)
         # self.offset_ = nn.Parameter(torch.zeros((spatial_dims,) + (self.group_size,)))
 
         self.offset_cov = Conv[Conv.CONV, spatial_dims](
-            in_channels=in_channel, out_channels=out_channel * spatial_dims * self.group_size, kernel_size=1, stride=1, padding=0
+            in_channels=self.in_channel, out_channels=int(out_channel * dfc_rate) * spatial_dims * self.group_size, kernel_size=1, stride=1, padding=0
         )
         self.offset_embedding = Pool[Pool.ADAPTIVEAVG, spatial_dims](
             output_size=1
@@ -944,7 +954,12 @@ class DeformableConvLayer(nn.Module):
         elif ndim == 3:
             B, C, _, _, _ = x.shape
 
-        offset_embed = self.offset_embedding(self.offset_cov(x)).view((B, self.group_size, self.out_channel, ndim))
+        if self.in_channel_fold:
+            x = self.ic_fd(x)
+
+        dfc_channel = int(self.out_channel * self.dfc_rate)
+
+        offset_embed = self.offset_embedding(self.offset_cov(x)).view((B, self.group_size, dfc_channel, ndim))
 
         x_f = torch.repeat_interleave(x, self.group_size, dim=1)
 
@@ -960,9 +975,10 @@ class DeformableConvLayer(nn.Module):
         out = 0
         _, _, H, W = x_rerange.shape         # (B, group_size * C_in, H, W)
 
-        offset_embed_batched = offset_embed.reshape(B * self.group_size, self.out_channel, ndim)  # (B * group_size, C_out, H, W)
+        offset_embed_batched = offset_embed.reshape(B * self.group_size, dfc_channel, ndim)  # (B * group_size, C_out, H, W)
         f_batched = x_rerange.reshape(B * self.group_size, self.in_channel, H, W)  # (B * group_size, C_in, H, W)
-        for oc in range(self.out_channel):
+
+        for oc in range(dfc_channel):
             f = self.trans(f_batched, one_grid * offset_embed_batched[:, oc, :][..., None, None])
             f = self.fusion(f.view((B, self.group_size, self.in_channel, H, W))
                             .view(B, self.group_size, self.in_channel * H, W))\
@@ -1191,6 +1207,7 @@ class UnetrUpBlockDFC(nn.Module):
         spatial_dims: int,
         shape: Union[Sequence[int], int],
         in_channels: int,
+        dfc_rate: float,
         out_channels: int,
         kernel_size: Union[Sequence[int], int],
         upsample_kernel_size: Union[Sequence[int], int],
@@ -1232,9 +1249,10 @@ class UnetrUpBlockDFC(nn.Module):
             )
         else:
             self.conv_block = UnetBasicBlockDFC(  # type: ignore
-                spatial_dims,
                 shape,
+                spatial_dims,
                 out_channels + out_channels,
+                dfc_rate,
                 out_channels,
                 kernel_size=kernel_size,
                 stride=1,
@@ -1271,6 +1289,7 @@ class UnetBasicBlockDFC(nn.Module):
         shape: Union[Sequence[int], int],
         spatial_dims: int,
         in_channels: int,
+        dfc_rate: float,
         out_channels: int,
         kernel_size: Union[Sequence[int], int],
         stride: Union[Sequence[int], int],
@@ -1289,7 +1308,7 @@ class UnetBasicBlockDFC(nn.Module):
         #     conv_only=True,
         # )
         self.conv1 = DeformableConvLayer(
-            shape, in_channels, out_channels, kernel_size, stride, spatial_dims, max_view=11
+            shape=shape, in_channel=in_channels, out_channel=out_channels, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=9, dfc_rate=0.5
         )
         self.conv2 = get_conv_layer(
             spatial_dims, out_channels, out_channels, kernel_size=kernel_size, stride=1, dropout=dropout, conv_only=True

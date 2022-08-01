@@ -1,0 +1,1 @@
+cd .. && pwd && python ./naf/model_training_3class_global_info.py --data_path ./data/Train_Pre_3class --work_dir ./naf/work_dir/baseline_global_info --model_name swinunetr

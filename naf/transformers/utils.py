@@ -154,3 +154,99 @@ class ConditionSliceChanneld(MapTransform):
             if len_ >= self.slice[1]:
                 d[key] = d[key][(slice(None),) * self.slice[0] + (slice(self.slice[0], self.slice[1]),) + (slice(None),) * (len_ - self.slice[1])]
         return d
+
+
+class FFTd(MapTransform):
+    """
+        """
+
+    def __init__(self, keys: KeysCollection, hf_mask_percent=0, allow_missing_keys: bool = False) -> None:
+        """
+        Args:
+            keys: keys of the corresponding items to be transformed.
+                See also: :py:class:`monai.transforms.compose.MapTransform`
+            allow_missing_keys: don't raise exception if key is missing.
+        """
+        super().__init__(keys, allow_missing_keys)
+        self.mat = np.array([0.2126, 0.7152, 0.0722]).reshape((3, ) + (1, ) * 2)
+        self.hf_mask_percent = hf_mask_percent
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        for key in self.key_iterator(d):
+            # to gray
+
+            rgb_img = d[key]
+
+            if not isinstance(rgb_img, np.ndarray):
+                raise RuntimeError("FFT transform only support numpy array.")
+
+            if rgb_img.shape[0] == 3 and rgb_img.ndim == 3:
+                gray_img = np.sum(rgb_img * self.mat, keepdims=True, axis=0)
+            else:
+                gray_img = rgb_img
+
+            res = np.fft.fft2(gray_img, axes=(0, 1))
+
+            shift_ = np.fft.fftshift(res, axes=(0, 1))
+            mask = np.ones_like(shift_)
+
+            remove_percent = self.hf_mask_percent
+            lf = False
+            if remove_percent < 0:
+                remove_percent = -remove_percent
+
+            size_ = mask.shape[0]
+
+            rm = int(size_ * remove_percent)
+            mask[size_ // 2 - rm: size_ // 2 + rm, size_ // 2 - rm: size_ // 2 + rm] = 0
+            if remove_percent > 0 and not lf:
+                shift_ *= mask
+            elif lf:
+                shift_ *= (1 - mask)
+            else:
+                pass
+
+            res = np.fft.ifftshift(shift_, axes=(0, 1))
+            res = np.fft.ifft2(res, axes=(0, 1))
+
+            d[key] = np.abs(res)
+
+        return d
+
+
+def fft_highpass_filter(rgb_img, hf_mask_percent=0.1):
+    mat = np.array([0.2126, 0.7152, 0.0722]).reshape((3,) + (1,) * 2)
+    if not isinstance(rgb_img, np.ndarray):
+        raise RuntimeError("FFT transform only support numpy array.")
+
+    if rgb_img.shape[0] == 3 and rgb_img.ndim == 3:
+        gray_img = np.sum(rgb_img * mat, keepdims=True, axis=0)
+    else:
+        gray_img = rgb_img
+
+    res = np.fft.fft2(gray_img, axes=(0, 1))
+
+    shift_ = np.fft.fftshift(res, axes=(0, 1))
+    mask = np.ones_like(shift_)
+
+    remove_percent = hf_mask_percent
+    lf = False
+    if remove_percent < 0:
+        remove_percent = -remove_percent
+
+    size_ = mask.shape[0]
+
+    rm = int(size_ * remove_percent)
+    mask[size_ // 2 - rm: size_ // 2 + rm, size_ // 2 - rm: size_ // 2 + rm] = 0
+    if remove_percent > 0 and not lf:
+        shift_ *= mask
+    elif lf:
+        shift_ *= (1 - mask)
+    else:
+        pass
+
+    res = np.fft.ifftshift(shift_, axes=(0, 1))
+    res = np.fft.ifft2(res, axes=(0, 1))
+
+    return np.abs(res)
