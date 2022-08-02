@@ -7,73 +7,21 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
-from models.swinunetr_dfc_v2 import SwinUNETR_DFCv2
+from losses.sim import MSEGrad2D
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
-
-import skimage.measure
-
-from models.swinunetrv3 import SwinUNETRV3
-
-from transformers.utils import ConditionAddChannelFirstd, ConditionAddChannelLastd, ConditionChannelNumberd
-from monai.utils import GridSampleMode
-
-join = os.path.join
-
-import numpy as np
-import torch
-from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
-
-import monai
-from monai.data import decollate_batch, PILReader, NibabelReader
-from monai.inferers import sliding_window_inference
-from monai.metrics import DiceMetric
-from monai.transforms import (
-    Activations,
-    AsChannelFirstd,
-    AddChanneld,
-    AsDiscrete,
-    Compose,
-    LoadImaged,
-    SpatialPadd,
-    RandSpatialCropd,
-    RandRotate90d,
-    ScaleIntensityd,
-    RandAxisFlipd,
-    RandZoomd,
-    RandGaussianNoised,
-    RandAdjustContrastd,
-    RandGaussianSmoothd,
-    RandHistogramShiftd,
-    EnsureTyped,
-    EnsureType, EnsureChannelFirstd,
-    Rand2DElasticd, GaussianSmoothd, GaussianSmooth
-)
-from monai.visualize import plot_2d_or_3d_image
-import matplotlib.pyplot as plt
-from datetime import datetime
-import shutil
-
-from models.unetr2d import UNETR2D
-from models.swinunetrv2_DFC import SwinUNETRV2_DFC
-from models.swinunetrv2 import SwinUNETRV2
-from monai.networks.nets import SwinUNETR
-
-print("Successfully imported all requirements!")
-
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
 
 def main():
     parser = argparse.ArgumentParser("Baseline for Microscopy image segmentation")
     # Dataset parameters
     parser.add_argument(
         "--data_path",
-        default="./data/Train_Pre_3class/",
+        default="./data/Train_Pre_SDF/",
         type=str,
         help="training data path; subfolders: images, labels",
     )
     parser.add_argument(
-        "--work_dir", default="./naf/work_dir/view11_elastic", help="path where to save models and logs"
+        "--work_dir", default="./naf/work_dir/sdf", help="path where to save models and logs"
     )
     parser.add_argument("--seed", default=2022, type=int)
     # parser.add_argument("--resume", default=False, help="resume from checkpoint")
@@ -83,7 +31,7 @@ def main():
     parser.add_argument(
         "--model_name", default="swinunetrv2", help="select mode: unet, unetr, swinunetr， swinunetrv2"
     )
-    parser.add_argument("--num_class", default=3, type=int, help="segmentation classes")
+    parser.add_argument("--num_class", default=1, type=int, help="segmentation classes")
     parser.add_argument(
         "--input_size", default=256, type=int, help="segmentation classes"
     )
@@ -96,11 +44,53 @@ def main():
 
     args = parser.parse_args()
 
+    from model_selector import model_factory
+
+    from transformers.utils import ConditionChannelNumberd
+    from monai.utils import GridSampleMode
+
+    join = os.path.join
+
+    import numpy as np
+    import torch
+    from torch.utils.data import DataLoader
+    from torch.utils.tensorboard import SummaryWriter
+
+    import monai
+    from monai.data import decollate_batch, PILReader
+    from monai.inferers import sliding_window_inference
+    from monai.metrics import DiceMetric
+    from monai.transforms import (
+        Activations,
+        AddChanneld,
+        AsDiscrete,
+        Compose,
+        LoadImaged,
+        SpatialPadd,
+        RandSpatialCropd,
+        RandRotate90d,
+        ScaleIntensityd,
+        RandAxisFlipd,
+        RandZoomd,
+        RandGaussianNoised,
+        RandAdjustContrastd,
+        RandGaussianSmoothd,
+        RandHistogramShiftd,
+        EnsureTyped,
+        EnsureType, EnsureChannelFirstd,
+        Rand2DElasticd, GaussianSmooth
+    )
+    from monai.visualize import plot_2d_or_3d_image
+    from datetime import datetime
+    import shutil
+
+    print("Successfully imported all requirements!")
+
     monai.config.print_config()
 
-    #%% set training/validation split
+    # %% set training/validation split
     np.random.seed(args.seed)
-    model_path = join(args.work_dir, args.model_name + "_3class")
+    model_path = join(args.work_dir, args.model_name + "_sdf")
     os.makedirs(model_path, exist_ok=True)
     run_id = datetime.now().strftime("%Y%m%d-%H%M")
     shutil.copyfile(
@@ -131,7 +121,7 @@ def main():
     print(
         f"training image num: {len(train_files)}, validation image num: {len(val_files)}"
     )
-    #%% define transforms for image and segmentation
+    # %% define transforms for image and segmentation
     train_transforms = Compose(
         [
             LoadImaged(
@@ -148,7 +138,7 @@ def main():
                 keys=["img"], target_dim=0, channel_num=3, allow_missing_keys=True
             ),
             ScaleIntensityd(
-                keys=["img"], allow_missing_keys=True
+                keys=["img", "label"], allow_missing_keys=True
             ),  # Do not scale label
             SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
             RandSpatialCropd(
@@ -187,14 +177,13 @@ def main():
                 keys=["img"], target_dim=0, channel_num=3, allow_missing_keys=True
             ),
             # AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
-            ScaleIntensityd(keys=["img"], allow_missing_keys=True),
+            ScaleIntensityd(keys=["img", "label"], allow_missing_keys=True),
             # AsDiscreted(keys=['label'], to_onehot=3),
             EnsureTyped(keys=["img", "label"]),
         ]
     )
 
-
-    #% define dataset, data loader
+    # % define dataset, data loader
     check_ds = monai.data.Dataset(data=train_files, transform=train_transforms)
     check_loader = DataLoader(check_ds, batch_size=1, num_workers=4)
     check_data = monai.utils.misc.first(check_loader)
@@ -206,7 +195,7 @@ def main():
         torch.max(check_data["label"]),
     )
 
-    #%% create a training data loader
+    # %% create a training data loader
     train_ds = monai.data.Dataset(data=train_files, transform=train_transforms)
     # use batch_size=2 to load images and use RandCropByPosNegLabeld to generate 2 x 4 images for network training
     train_loader = DataLoader(
@@ -225,88 +214,18 @@ def main():
     )
 
     post_pred = Compose(
-        [EnsureType(), Activations(softmax=True), AsDiscrete(threshold=0.5)]
+        [EnsureType(), Activations(sigmoid=True), AsDiscrete(threshold=0.5)]
     )
-    post_gt = Compose([EnsureType(), AsDiscrete(to_onehot=None)])
+    post_gt = Compose([EnsureType(), AsDiscrete(threshold=0.5)])
     # create UNet, DiceLoss and Adam optimizer
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    if args.model_name.lower() == "unet":
-        model = monai.networks.nets.UNet(
-            spatial_dims=2,
-            in_channels=3,
-            out_channels=args.num_class,
-            channels=(16, 32, 64, 128, 256),
-            strides=(2, 2, 2, 2),
-            num_res_units=2,
-        ).to(device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    if args.model_name.lower() == "unetr":
-        model = UNETR2D(
-            in_channels=3,
-            out_channels=args.num_class,
-            img_size=(args.input_size, args.input_size),
-            feature_size=16,
-            hidden_size=768,
-            mlp_dim=3072,
-            num_heads=12,
-            pos_embed="perceptron",
-            norm_name="instance",
-            res_block=True,
-            dropout_rate=0.0,
-        ).to(device)
+    model = model_factory(args.model_name.lower(), device, args, in_channels=3)
 
-    if args.model_name.lower() == "swinunetr":
-        model = monai.networks.nets.SwinUNETR(
-            img_size=(args.input_size, args.input_size),
-            in_channels=3,
-            out_channels=args.num_class,
-            feature_size=24,  # should be divisible by 12
-            spatial_dims=2,
-        ).to(device)
-
-    if args.model_name.lower() == "swinunetrv2":
-        model = SwinUNETRV2(
-            img_size=(args.input_size, args.input_size),
-            in_channels=3,
-            # norm_name="batch",
-            out_channels=args.num_class,
-            feature_size=24,  # should be divisible by 12
-            spatial_dims=2,
-        ).to(device)
-
-    # if args.model_name.lower() == "swinunetrv2_dfc":
-    #     model = SwinUNETRV2_DFC(
-    #         img_size=(args.input_size, args.input_size),
-    #         in_channels=3,
-    #         # norm_name="batch",
-    #         out_channels=args.num_class,
-    #         feature_size=24,  # should be divisible by 12
-    #         spatial_dims=2,
-    #     ).to(device)
-
-    if args.model_name.lower() == "swinunetr_dfc_v2":
-        model = SwinUNETR_DFCv2(
-            img_size=(args.input_size, args.input_size),
-            in_channels=3,
-            # norm_name="batch",
-            out_channels=args.num_class,
-            feature_size=24,  # should be divisible by 12
-            spatial_dims=2,
-        ).to(device)
-
-    if args.model_name.lower() == "swinunetrv3":
-        model = SwinUNETRV3(
-            img_size=(args.input_size, args.input_size),
-            in_channels=3,
-            norm_name="batch",
-            out_channels=args.num_class,
-            feature_size=24,  # should be divisible by 12
-            spatial_dims=2,
-        ).to(device)
-
-    loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
+    # loss_function = monai.losses.DiceFocalLoss(softmax=True).to(device)
+    # loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
     # loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.25, 0.25, 0.5]).to(device))
-
+    loss_function = MSEGrad2D(a=0.2)
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
     smooth_transformer = GaussianSmooth(sigma=1)
@@ -330,19 +249,19 @@ def main():
             )
             optimizer.zero_grad()
             outputs = model(inputs)
-            labels_onehot = monai.networks.one_hot(
-                labels, args.num_class
-            )  # (b,cls,256,256)
+            # labels_onehot = monai.networks.one_hot(
+            #     labels, args.num_class
+            # )  # (b,cls,256,256)
 
             # smooth edge
             # labels_onehot[:, 2, ...] = smooth_transformer(labels_onehot[:, 2, ...])
 
-            loss = loss_function(outputs, labels_onehot)
+            loss = loss_function.loss(labels, outputs)
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
             epoch_len = len(train_ds) // train_loader.batch_size
-            # print(f"{step}/{epoch_len}, train_loss: {loss.item():.4f}")
+            print(f"{step}/{epoch_len}, train_loss: {loss.item():.4f}")
             writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)
         epoch_loss /= step
         epoch_loss_values.append(epoch_loss)
@@ -364,24 +283,24 @@ def main():
                     val_images, val_labels = val_data["img"].to(device), val_data[
                         "label"
                     ].to(device)
-                    val_labels_onehot = monai.networks.one_hot(
-                        val_labels, args.num_class
-                    )
+                    # val_labels_onehot = monai.networks.one_hot(
+                    #     val_labels, args.num_class
+                    # )
                     roi_size = (256, 256)
                     sw_batch_size = 4
                     val_outputs = sliding_window_inference(
                         val_images, roi_size, sw_batch_size, model
                     )
                     val_outputs = [post_pred(i) for i in decollate_batch(val_outputs)]
-                    val_labels_onehot = [
-                        post_gt(i) for i in decollate_batch(val_labels_onehot)
+                    val_labels = [
+                        post_gt(i) for i in decollate_batch(val_labels)
                     ]
                     # compute metric for current iteration
                     print(
                         os.path.basename(
                             val_data["img_meta_dict"]["filename_or_obj"][0]
                         ),
-                        dice_metric(y_pred=val_outputs, y=val_labels_onehot),
+                        dice_metric(y_pred=val_outputs, y=val_labels),
                     )
 
                 # aggregate the final mean dice result

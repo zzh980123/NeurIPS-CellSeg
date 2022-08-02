@@ -176,11 +176,16 @@ def sliding_window_inference_g(
             [slice(int(idx / num_win), int(idx / num_win) + 1), slice(None)] + list(slices[idx % num_win])
             for idx in slice_range
         ]
+        new_kwargs = kwargs.copy()
         if inputs_concat_key is not None:
-            window_data = torch.cat([torch.concat([inputs[win_slice], kwargs[inputs_concat_key]], dim=1) for win_slice in unravel_slice]).to(sw_device)
-        window_data = torch.cat(([inputs[win_slice] for win_slice in unravel_slice])).to(sw_device)
+            g_ = kwargs[inputs_concat_key]
+            window_data = torch.cat([torch.concat([inputs[win_slice], g_], dim=1) for win_slice in unravel_slice]).to(sw_device)
+        else:
+            window_data = torch.cat(([inputs[win_slice] for win_slice in unravel_slice])).to(sw_device)
 
-        seg_prob_out = predictor(window_data, *args, **kwargs)  # batched patch segmentation
+        if inputs_concat_key in new_kwargs:
+            del new_kwargs[inputs_concat_key]
+        seg_prob_out = predictor(window_data, *args, **new_kwargs)  # batched patch segmentation
 
         # convert seg_prob_out to tuple seg_prob_tuple, this does not allocate new memory.
         seg_prob_tuple: Tuple[torch.Tensor, ...]

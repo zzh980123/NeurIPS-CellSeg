@@ -156,7 +156,7 @@ class ConditionSliceChanneld(MapTransform):
         return d
 
 
-class FFTd(MapTransform):
+class FFTFilterd(MapTransform):
     """
         """
 

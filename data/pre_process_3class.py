@@ -11,6 +11,7 @@ convert instance labels to three class labels:
 """
 
 import os
+
 join = os.path.join
 import argparse
 
@@ -18,6 +19,7 @@ from skimage import io, segmentation, morphology, exposure
 import numpy as np
 import tifffile as tif
 from tqdm import tqdm
+
 
 def normalize_channel(img, lower=1, upper=99):
     non_zero_vals = img[np.nonzero(img)]
@@ -27,6 +29,7 @@ def normalize_channel(img, lower=1, upper=99):
     else:
         img_norm = img
     return img_norm.astype(np.uint8)
+
 
 def create_interior_map(inst_map):
     """
@@ -54,27 +57,28 @@ def create_interior_map(inst_map):
     interior[interior_temp] = 1
     interior[boundary] = 2
     return interior
-    
+
+
 def main():
     parser = argparse.ArgumentParser('Preprocessing for microscopy image segmentation', add_help=False)
     parser.add_argument('-i', '--input_path', default='./data/Train_Labeled', type=str, help='training data path; subfolders: images, labels')
-    parser.add_argument("-o", '--output_path', default='./data/Train_Pre_3class', type=str, help='preprocessing data path')    
+    parser.add_argument("-o", '--output_path', default='./data/Train_Pre_3class', type=str, help='preprocessing data path')
     args = parser.parse_args()
-    
+
     source_path = args.input_path
     target_path = args.output_path
-    
+
     img_path = join(source_path, 'images')
-    gt_path =  join(source_path, 'labels')
-    
+    gt_path = join(source_path, 'labels')
+
     img_names = sorted(os.listdir(img_path))
-    gt_names = [img_name.split('.')[0]+'_label.tiff' for img_name in img_names]
-    
+    gt_names = [img_name.split('.')[0] + '_label.tiff' for img_name in img_names]
+
     pre_img_path = join(target_path, 'images')
     pre_gt_path = join(target_path, 'labels')
     os.makedirs(pre_img_path, exist_ok=True)
     os.makedirs(pre_gt_path, exist_ok=True)
-    
+
     for img_name, gt_name in zip(tqdm(img_names), gt_names):
 
         save_img = join(target_path, 'images', img_name.split('.')[0] + '.png')
@@ -86,48 +90,26 @@ def main():
         else:
             img_data = io.imread(join(img_path, img_name))
         gt_data = tif.imread(join(gt_path, gt_name))
-        
+
         # normalize image data
         if len(img_data.shape) == 2:
             img_data = np.repeat(np.expand_dims(img_data, axis=-1), 3, axis=-1)
         elif len(img_data.shape) == 3 and img_data.shape[-1] > 3:
-            img_data = img_data[:,:, :3]
+            img_data = img_data[:, :, :3]
         else:
             pass
         pre_img_data = np.zeros(img_data.shape, dtype=np.uint8)
         for i in range(3):
-            img_channel_i = img_data[:,:,i]
-            if len(img_channel_i[np.nonzero(img_channel_i)])>0:
-                pre_img_data[:,:,i] = normalize_channel(img_channel_i, lower=1, upper=99)
-        
+            img_channel_i = img_data[:, :, i]
+            if len(img_channel_i[np.nonzero(img_channel_i)]) > 0:
+                pre_img_data[:, :, i] = normalize_channel(img_channel_i, lower=1, upper=99)
+
         # conver instance bask to three-class mask: interior, boundary
         interior_map = create_interior_map(gt_data.astype(np.int16))
-        
-        io.imsave(join(target_path, 'images', img_name.split('.')[0]+'.png'), pre_img_data.astype(np.uint8), check_contrast=False)
-        io.imsave(join(target_path, 'labels', gt_name.split('.')[0]+'.png'), interior_map.astype(np.uint8), check_contrast=False)
-    
+
+        io.imsave(join(target_path, 'images', img_name.split('.')[0] + '.png'), pre_img_data.astype(np.uint8), check_contrast=False)
+        io.imsave(join(target_path, 'labels', gt_name.split('.')[0] + '.png'), interior_map.astype(np.uint8), check_contrast=False)
+
+
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

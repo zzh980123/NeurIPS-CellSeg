@@ -7,50 +7,7 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
-
-from model_selector import model_factory
-
-from transformers.utils import ConditionChannelNumberd
-from monai.utils import GridSampleMode
-
-join = os.path.join
-
-import numpy as np
-import torch
-from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
-
-import monai
-from monai.data import decollate_batch, PILReader
-from monai.inferers import sliding_window_inference
-from monai.metrics import DiceMetric
-from monai.transforms import (
-    Activations,
-    AddChanneld,
-    AsDiscrete,
-    Compose,
-    LoadImaged,
-    SpatialPadd,
-    RandSpatialCropd,
-    RandRotate90d,
-    ScaleIntensityd,
-    RandAxisFlipd,
-    RandZoomd,
-    RandGaussianNoised,
-    RandAdjustContrastd,
-    RandGaussianSmoothd,
-    RandHistogramShiftd,
-    EnsureTyped,
-    EnsureType, EnsureChannelFirstd,
-    Rand2DElasticd, GaussianSmooth
-)
-from monai.visualize import plot_2d_or_3d_image
-from datetime import datetime
-import shutil
-
-print("Successfully imported all requirements!")
-
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
 
 def main():
     parser = argparse.ArgumentParser("Baseline for Microscopy image segmentation")
@@ -84,6 +41,48 @@ def main():
     parser.add_argument("--initial_lr", type=float, default=6e-4, help="learning rate")
 
     args = parser.parse_args()
+
+    from model_selector import model_factory
+
+    from transformers.utils import ConditionChannelNumberd
+    from monai.utils import GridSampleMode
+
+    join = os.path.join
+
+    import numpy as np
+    import torch
+    from torch.utils.data import DataLoader
+    from torch.utils.tensorboard import SummaryWriter
+
+    import monai
+    from monai.data import decollate_batch, PILReader
+    from monai.inferers import sliding_window_inference
+    from monai.metrics import DiceMetric
+    from monai.transforms import (
+        Activations,
+        AddChanneld,
+        AsDiscrete,
+        Compose,
+        LoadImaged,
+        SpatialPadd,
+        RandSpatialCropd,
+        RandRotate90d,
+        ScaleIntensityd,
+        RandAxisFlipd,
+        RandZoomd,
+        RandGaussianNoised,
+        RandAdjustContrastd,
+        RandGaussianSmoothd,
+        RandHistogramShiftd,
+        EnsureTyped,
+        EnsureType, EnsureChannelFirstd,
+        Rand2DElasticd, GaussianSmooth
+    )
+    from monai.visualize import plot_2d_or_3d_image
+    from datetime import datetime
+    import shutil
+
+    print("Successfully imported all requirements!")
 
     monai.config.print_config()
 

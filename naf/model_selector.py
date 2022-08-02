@@ -1,4 +1,5 @@
 import monai
+from monai.networks.nets import SwinUNETR
 
 from models import UNETR2D
 from models.swinunetr_dfc_v2 import SwinUNETR_DFCv2
@@ -36,7 +37,7 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
         ).to(device)
 
     if model_name == 'swinunetr':
-        model = monai.networks.nets.SwinUNETR(
+        model = SwinUNETR(
             img_size=(args.input_size, args.input_size),
             in_channels=in_channels,
             out_channels=args.num_class,

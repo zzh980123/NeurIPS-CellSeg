@@ -12,7 +12,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 from model_selector import model_factory
 from my_slid_window.sliding_window_inferebce_with_global_info import sliding_window_inference_g
 
-from transformers.utils import ConditionChannelNumberd, FFTd
+from transformers.utils import ConditionChannelNumberd, FFTFilterd
 from monai.utils import GridSampleMode
 
 join = os.path.join
@@ -141,16 +141,16 @@ def main():
             ),  # Do not scale label
             SpatialPadd(keys=["img", "label", "gimg"], spatial_size=args.input_size),
             Resized(keys=["gimg"], spatial_size=(args.input_size, args.input_size)),
-            FFTd(keys=["gimg"], hf_mask_percent=0.1),
+            FFTFilterd(keys=["gimg"], hf_mask_percent=0.1),
             ScaleIntensityd(
                 keys=["gimg"], allow_missing_keys=True
             ),
             RandSpatialCropd(
                 keys=["img", "label"], roi_size=args.input_size, random_size=False
             ),
-            RandAxisFlipd(keys=["img", "label"], prob=0.5),
-            RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
-            Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
+            RandAxisFlipd(keys=["img", "label", "gimg"], prob=0.5),
+            RandRotate90d(keys=["img", "label", "gimg"], prob=0.5, spatial_axes=[0, 1]),
+            Rand2DElasticd(keys=["img", "label"], spacing=(9, 9), magnitude_range=(-5, 5), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
@@ -182,16 +182,14 @@ def main():
             ),
             # AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
             ScaleIntensityd(keys=["img"], allow_missing_keys=True),
-            Resized(keys=["gimg"], spatial_size=args.input_size),
-            FFTd(keys=["gimg"], hf_mask_percent=0.1),
+            SpatialPadd(keys=["gimg"], spatial_size=args.input_size),
+            Resized(keys=["gimg"], spatial_size=(args.input_size, args.input_size)),
+            FFTFilterd(keys=["gimg"], hf_mask_percent=0.1),
             ScaleIntensityd(
                 keys=["gimg"], allow_missing_keys=True
             ),
-            RandSpatialCropd(
-                keys=["img", "label"], roi_size=args.input_size, random_size=False
-            ),
             # AsDiscreted(keys=['label'], to_onehot=3),
-            EnsureTyped(keys=["img", "label"]),
+            EnsureTyped(keys=["img", "label", "gimg"]),
         ]
     )
 
@@ -286,16 +284,16 @@ def main():
             "loss": epoch_loss_values,
         }
 
-        if epoch > 20 and epoch % val_interval == 0:
+        if epoch > 0 and epoch % val_interval == 0:
             model.eval()
             with torch.no_grad():
                 val_images = None
                 val_labels = None
                 val_outputs = None
                 for val_data in val_loader:
-                    val_images, val_labels, val_ginfo = val_data["img"].to(device), val_data[
-                        "label"
-                    ].to(device), val_data["gimg"].to(device)
+                    val_images, val_labels, val_ginfo = val_data["img"].to(device), \
+                                                        val_data["label"].to(device), \
+                                                        val_data["gimg"].to(device)
                     val_labels_onehot = monai.networks.one_hot(
                         val_labels, args.num_class
                     )

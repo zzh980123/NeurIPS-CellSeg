@@ -29,8 +29,7 @@ def normalize_channel(img, lower=1, upper=99):
     return img_norm.astype(np.uint8)
 
 def resize(img, new_size):
-    return ResizeD({"img": img}, spatial_size=new_size, align_corners=True)["img"]
-
+    return Resize(spatial_size=new_size, align_corners=True)(img)
 
 def main():
     parser = argparse.ArgumentParser('Baseline for Microscopy image segmentation', add_help=False)

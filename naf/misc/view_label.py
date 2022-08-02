@@ -3,8 +3,8 @@ import imageio
 import numpy as np
 
 # path = '/media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Labeled/labels/cell_00143_label.tiff'
-path = '../data/Train_Pre_3class/labels/cell_00143_label.png'
-path_src = '../data/Train_Pre_3class/images/cell_00143.png'
+path = '../data/Train_Pre_3class/labels/cell_00848_label.png'
+path_src = '../data/Train_Pre_3class/images/cell_00848.png'
 # label = tif.imread(path)
 label = imageio.imread_v2(path)
 src = imageio.imread_v2(path_src)
@@ -32,5 +32,6 @@ print(np.unique(label))
 
 label[label == 0] = 0
 label[label == 1] = 255
+# label[label == 1] = 255
 imageio.imwrite("view.png", label)
 imageio.imwrite("view_src.png", src)
