@@ -1,3 +1,4 @@
+import random
 import re
 from copy import deepcopy
 from typing import Any, Callable, Dict, Hashable, List, Mapping, Optional, Sequence, Tuple, Union
@@ -168,7 +169,7 @@ class FFTFilterd(MapTransform):
             allow_missing_keys: don't raise exception if key is missing.
         """
         super().__init__(keys, allow_missing_keys)
-        self.mat = np.array([0.2126, 0.7152, 0.0722]).reshape((3, ) + (1, ) * 2)
+        self.mat = np.array([0.2126, 0.7152, 0.0722]).reshape((3,) + (1,) * 2)
         self.hf_mask_percent = hf_mask_percent
 
     def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
@@ -251,3 +252,74 @@ def fft_highpass_filter(rgb_img, hf_mask_percent=0.1):
 
     return np.abs(res)
 
+
+import imgaug.augmenters.color as color_aug
+
+
+class RandBrightnessd(RandomizableTransform, MapTransform, InvertibleTransform):
+
+    def __init__(self, keys: KeysCollection, add=(-30, 30), prob=1.0, allow_missing_keys: bool = False) -> None:
+        """
+        Args:
+            keys: keys of the corresponding items to be transformed.
+                See also: :py:class:`monai.transforms.compose.MapTransform`
+            allow_missing_keys: don't raise exception if key is missing.
+        """
+        MapTransform.__init__(self, keys, allow_missing_keys)
+        RandomizableTransform.__init__(self, prob, do_transform=True)
+        self.changer = color_aug.AddToBrightness(add=add)
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        if random.random() > self.prob:
+            return d
+
+        for key in self.key_iterator(d):
+            data = d[key]
+            assert data.ndim == 3
+            # colorspace transform need unsigned int
+            # opencv need the channel at the last dimension
+            flag = False
+            if 3 in data.shape and data.shape[0] == 3:
+                data = np.transpose(data, axes=(1, 2, 0))
+                flag = True
+            res = self.changer.augment_image(data.astype(np.uint8))
+            if flag:
+                res = np.transpose(res, axes=(2, 0, 1))
+            d[key] = res
+
+        return d
+
+
+class RandHueAndSaturationd(RandomizableTransform, MapTransform, InvertibleTransform):
+
+    def __init__(self, keys: KeysCollection, prob=1.0, add=(-50, 50), allow_missing_keys: bool = False) -> None:
+        """
+        Args:
+            keys: keys of the corresponding items to be transformed.
+                See also: :py:class:`monai.transforms.compose.MapTransform`
+            allow_missing_keys: don't raise exception if key is missing.
+        """
+        MapTransform.__init__(self, keys, allow_missing_keys)
+        RandomizableTransform.__init__(self, prob, do_transform=True)
+        self.changer = color_aug.AddToHueAndSaturation(value=add)
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        if random.random() > self.prob:
+            return d
+
+        for key in self.key_iterator(d):
+            data = d[key]
+            assert data.ndim == 3
+            # colorspace transform need unsigned int
+            # opencv need the channel at the last dimension
+            flag = False
+            if 3 in data.shape and data.shape[0] == 3:
+                data = np.transpose(data, axes=(1, 2, 0))
+                flag = True
+            res = self.changer.augment_image(data.astype(np.uint8))
+            if flag:
+                res = np.transpose(res, axes=(2, 0, 1))
+            d[key] = res
+        return d

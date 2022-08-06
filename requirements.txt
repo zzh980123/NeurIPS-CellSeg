@@ -11,3 +11,5 @@ psutil
 pandas
 einops
 imagecodecs
+imgaug
+taichi

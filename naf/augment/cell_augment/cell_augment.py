@@ -1,3 +1,5 @@
+import math
+import random
 from typing import Union, Tuple
 
 import numpy as np
@@ -58,20 +60,33 @@ def _gen_strip_cells(one_strip_cell_template: np.ndarray, label_mask: np.ndarray
     return __gen_strip_cells(one_strip_cell_template, label_mask, cell_shape, output_img_size, order, cell_max_number, label_bg_value)
 
 
+def gen_random_boxes(include_size, box_min_size, box_max_size, number=10, min_angle=0, max_angle=2 * math.pi):
+
+    for _ in range(number):
+        random_box_h_scale = random.random()
+        random_box_w_scale = random.random()
+
+        inter_h = (1 - random_box_h_scale) * box_min_size[0] + random_box_h_scale * box_max_size[0]
+        inter_w = (1 - random_box_w_scale) * box_min_size[1] + random_box_w_scale * box_max_size[1]
+        r = math.sqrt(inter_h ** 2 + inter_w ** 2) / 2
+
+    pass
+
+
 @jit(nopython=True)
 def __gen_strip_cells(one_strip_cell_template: np.ndarray, label_mask: np.ndarray, cell_shape, output_img_size: Union[Tuple, int] = (256, 256), order=1, cell_max_number=100,
                       img_bg_color=0,
                       label_bg_value=0):
-
     C_img = one_strip_cell_template.shape[-1]
     C_label = label_mask.shape[-1]
-    output_img = np.empty(output_img_size + (C_img, ))
+    output_img = np.empty(output_img_size + (C_img,))
     output_img.fill(img_bg_color)
-    output_label = np.empty(output_img_size + (C_label, ))
+    output_label = np.empty(output_img_size + (C_label,))
     output_label.fill(label_bg_value)
 
     if order == 1:
         # filled like:
+        # || || || ||
         # || || || ||
         # || || || ||
         # || || || ||
@@ -95,7 +110,12 @@ def __gen_strip_cells(one_strip_cell_template: np.ndarray, label_mask: np.ndarra
 
                 cnt += 1
 
-        return output_img, output_label
+    elif order == 2:
+
+        pass
+
+    return output_img, output_label
+
 
 if __name__ == '__main__':
     res_img, res_mask = gen_strip_cells('../../../data/ext/cell_00143.png', '../../../data/ext/cell_00143_label.png')
