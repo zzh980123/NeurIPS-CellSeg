@@ -136,11 +136,9 @@ class SDF2D:
             self.output_pic[i, j] = vec3(ti.cast(ti.sqrt(bit_pic[n, i, j][2]) * coff + offset, ti.u32))
 
     @ti.kernel
-    def post_process_sdf(self, bit_pic_w: ti.template(), bit_pic_b: ti.template(), n: ti.i32, coff: ti.f32,
-                         offset: ti.f32):
+    def post_process_sdf(self, bit_pic_w: ti.template(), bit_pic_b: ti.template(), n: ti.i32):
         for i, j in self.output_pic:
-            self.output_pic[i, j] = vec3(
-                ti.cast((ti.sqrt(bit_pic_w[n, i, j][2]) - ti.sqrt(bit_pic_b[n, i, j][2])) * coff + offset, ti.u32))
+            self.output_pic[i, j] = vec3((ti.sqrt(bit_pic_w[n, i, j][2]) - ti.sqrt(bit_pic_b[n, i, j][2])))
 
     @ti.kernel
     def post_process_sdf_linear_1channel(self, bit_pic_w: ti.template(), bit_pic_b: ti.template(), n: ti.i32):
@@ -201,13 +199,12 @@ class SDF2D:
         self.gen_udf_w_h()
 
         if to_rgb:  # grey value == 0.5 means sdf == 0, scale sdf proportionally
-            max_positive_dist = ti.sqrt(self.find_max(self.bit_pic_white))
-            min_negative_dist = ti.sqrt(self.find_max(self.bit_pic_black))  # this value is positive
-            coefficient = 127.5 / max(max_positive_dist, min_negative_dist)
-            offset = 127.5
-            self.post_process_sdf(self.bit_pic_white, self.bit_pic_black, self.num, coefficient, offset)
+            self.post_process_sdf(self.bit_pic_white, self.bit_pic_black, self.num)
             if output:
-                imageio.imwrite(save_path, resize2d(self.output_pic.to_numpy(), new_size=self.old_shape)[..., 0])
+                pic = self.output_pic.to_numpy()
+                coefficient = 127.5 / max(pic.max(), -pic.min())
+                pic = pic * coefficient + 127.5
+                imageio.imwrite(save_path, resize2d(pic.astype(np.uint8), new_size=self.old_shape)[..., 0])
         else:  # no normalization
             if output:
                 pass
@@ -327,7 +324,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('Preprocessing for microscopy image segmentation (from 3class to sdf)', add_help=False)
     parser.add_argument('-i', '--input_path', default='./data/Train_Pre_3class', type=str,
                         help='3class data path; subfolders: images, labels')
-    parser.add_argument("-o", '--output_path', default='./data/Train_Pre_SDF', type=str, help='preprocessing data path')
+    parser.add_argument("-o", '--output_path', default='./data/Train_Pre_sdf', type=str, help='preprocessing data path')
     args = parser.parse_args()
 
     source_path = args.input_path

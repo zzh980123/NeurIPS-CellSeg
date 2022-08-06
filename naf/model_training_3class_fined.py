@@ -7,23 +7,21 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
-from monai.transforms import NormalizeIntensityd
+from losses import sim
 
-from losses.sim import MSEGrad2D
-
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
 def main():
     parser = argparse.ArgumentParser("Baseline for Microscopy image segmentation")
     # Dataset parameters
     parser.add_argument(
         "--data_path",
-        default="./data/Train_Pre_sdf/",
+        default="./data/Train_Pre_3class/",
         type=str,
         help="training data path; subfolders: images, labels",
     )
     parser.add_argument(
-        "--work_dir", default="./naf/work_dir/sdf", help="path where to save models and logs"
+        "--work_dir", default="./naf/work_dir/swinunetr_dfc_v3_fined", help="path where to save models and logs"
     )
     parser.add_argument("--seed", default=2022, type=int)
     # parser.add_argument("--resume", default=False, help="resume from checkpoint")
@@ -31,17 +29,19 @@ def main():
 
     # Model parameters
     parser.add_argument(
-        "--model_name", default="swinunetrv2", help="select mode: unet, unetr, swinunetr， swinunetrv2"
+        "--model_name", default="swinunetr_dfc_v3", help="select mode: unet, unetr, swinunetr， swinunetrv2"
     )
-    parser.add_argument("--num_class", default=1, type=int, help="segmentation classes")
+    parser.add_argument('--model_path', default='./naf/work_dir/swinunetr_dfc_v3', help='path where to save models and segmentation results')
+
+    parser.add_argument("--num_class", default=3, type=int, help="segmentation classes")
     parser.add_argument(
         "--input_size", default=256, type=int, help="segmentation classes"
     )
     # Training parameters
     parser.add_argument("--batch_size", default=8, type=int, help="Batch size per GPU")
-    parser.add_argument("--max_epochs", default=2000, type=int)
+    parser.add_argument("--max_epochs", default=3000, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
-    parser.add_argument("--epoch_tolerance", default=1500, type=int)
+    parser.add_argument("--epoch_tolerance", default=100, type=int)
     parser.add_argument("--initial_lr", type=float, default=6e-4, help="learning rate")
 
     args = parser.parse_args()
@@ -92,7 +92,7 @@ def main():
 
     # %% set training/validation split
     np.random.seed(args.seed)
-    model_path = join(args.work_dir, args.model_name + "_sdf")
+    model_path = join(args.work_dir, args.model_name + "_3class_fined")
     os.makedirs(model_path, exist_ok=True)
     run_id = datetime.now().strftime("%Y%m%d-%H%M")
     shutil.copyfile(
@@ -113,11 +113,11 @@ def main():
     val_indices = indices[:val_split]
 
     train_files = [
-        {"img": join(img_path, img_names[i]), "sdf_label": join(gt_path, gt_names[i])}
+        {"img": join(img_path, img_names[i]), "label": join(gt_path, gt_names[i])}
         for i in train_indices
     ]
     val_files = [
-        {"img": join(img_path, img_names[i]), "sdf_label": join(gt_path, gt_names[i])}
+        {"img": join(img_path, img_names[i]), "label": join(gt_path, gt_names[i])}
         for i in val_indices
     ]
     print(
@@ -127,9 +127,9 @@ def main():
     train_transforms = Compose(
         [
             LoadImaged(
-                keys=["img", "sdf_label"], reader=PILReader, dtype=np.uint8
+                keys=["img", "label"], reader=PILReader, dtype=np.uint8
             ),  # image three channels (H, W, 3); label: (H, W)
-            AddChanneld(keys=["sdf_label"], allow_missing_keys=True),  # label: (1, H, W)
+            AddChanneld(keys=["label"], allow_missing_keys=True),  # label: (1, H, W)
             # ConditionAddChannelLastd(
             #     keys=["img"], target_dims=2, allow_missing_keys=True
             # ),
@@ -142,34 +142,33 @@ def main():
             ScaleIntensityd(
                 keys=["img"], allow_missing_keys=True
             ),  # Do not scale label
-            SpatialPadd(keys=["img", "sdf_label"], spatial_size=args.input_size),
+            SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
             RandSpatialCropd(
-                keys=["img", "sdf_label"], roi_size=args.input_size, random_size=False
+                keys=["img", "label"], roi_size=args.input_size, random_size=False
             ),
-            ScaleIntensityd(keys=["sdf_label"], allow_missing_keys=True, minv=None, maxv=None, factor=(1 / 255 - 1)),
-            RandAxisFlipd(keys=["img", "sdf_label"], prob=0.5),
-            RandRotate90d(keys=["img", "sdf_label"], prob=0.5, spatial_axes=[0, 1]),
-            Rand2DElasticd(keys=["img", "sdf_label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
+            RandAxisFlipd(keys=["img", "label"], prob=0.5),
+            RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
+            Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
             RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2)),
             RandHistogramShiftd(keys=["img"], prob=0.25, num_control_points=3),
             RandZoomd(
-                keys=["img", "sdf_label"],
+                keys=["img", "label"],
                 prob=0.15,
                 min_zoom=0.8,
                 max_zoom=1.5,
                 mode=["area", "nearest"],
             ),
-            EnsureTyped(keys=["img", "sdf_label"]),
+            EnsureTyped(keys=["img", "label"]),
         ]
     )
 
     val_transforms = Compose(
         [
-            LoadImaged(keys=["img", "sdf_label"], reader=PILReader, dtype=np.uint8),
-            AddChanneld(keys=["sdf_label"], allow_missing_keys=True),
+            LoadImaged(keys=["img", "label"], reader=PILReader, dtype=np.uint8),
+            AddChanneld(keys=["label"], allow_missing_keys=True),
             # ConditionAddChannelLastd(
             #     keys=["img"], target_dims=2, allow_missing_keys=True
             # ),
@@ -181,8 +180,8 @@ def main():
             ),
             # AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
             ScaleIntensityd(keys=["img"], allow_missing_keys=True),
-            ScaleIntensityd(keys=["sdf_label"], allow_missing_keys=True, minv=None, maxv=None, factor=(1 / 255 - 1)),
-            EnsureTyped(keys=["img", "sdf_label"]),
+            # AsDiscreted(keys=['label'], to_onehot=3),
+            EnsureTyped(keys=["img", "label"]),
         ]
     )
 
@@ -194,8 +193,8 @@ def main():
         "sanity check:",
         check_data["img"].shape,
         torch.max(check_data["img"]),
-        check_data["sdf_label"].shape,
-        torch.max(check_data["sdf_label"]),
+        check_data["label"].shape,
+        torch.max(check_data["label"]),
     )
 
     # %% create a training data loader
@@ -217,53 +216,62 @@ def main():
     )
 
     post_pred = Compose(
-        [EnsureType(), Activations(sigmoid=True), AsDiscrete(threshold=0.5)]
+        [EnsureType(), Activations(softmax=True), AsDiscrete(threshold=0.5)]
     )
-    post_gt = Compose([EnsureType(), AsDiscrete(threshold=0.5)])
+    post_gt = Compose([EnsureType(), AsDiscrete(to_onehot=None)])
     # create UNet, DiceLoss and Adam optimizer
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = model_factory(args.model_name.lower(), device, args, in_channels=3)
 
-    # loss_function = monai.losses.DiceFocalLoss(softmax=True).to(device)
-    # loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
+    loss_function1 = monai.losses.DiceCELoss(softmax=True).to(device)
+    loss_function2 = sim.LovaszSoftmaxLoss().to(device)
     # loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.25, 0.25, 0.5]).to(device))
-    loss_function = MSEGrad2D()
+
     initial_lr = args.initial_lr
-    optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
+
     # smooth_transformer = GaussianSmooth(sigma=1)
+
+    # load model parameters
+    checkpoint = torch.load(join(args.model_path, 'best_Dice_model.pth'), map_location=torch.device(device))
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    optimizer.param_groups[0]['capturable'] = True
+    restart_epoch = checkpoint['epoch']
+    history_loss = checkpoint['loss']
 
     # start a typical PyTorch training
     max_epochs = args.max_epochs
     epoch_tolerance = args.epoch_tolerance
     val_interval = args.val_interval
     best_metric = -1
-    best_metric_epoch = -1
-    epoch_loss_values = list()
+    best_metric_epoch = restart_epoch
+    epoch_loss_values = history_loss
     metric_values = list()
     torch.autograd.set_detect_anomaly(True)
     writer = SummaryWriter(model_path)
-    for epoch in range(1, max_epochs):
+
+    print(f"restart from {restart_epoch} epoch...")
+
+    for epoch in range(restart_epoch, max_epochs):
         model.train()
         epoch_loss = 0
         for step, batch_data in enumerate(train_loader, 1):
-            inputs, labels = batch_data["img"].to(device), batch_data["sdf_label"].to(
+            inputs, labels = batch_data["img"].to(device), batch_data["label"].to(
                 device
             )
             optimizer.zero_grad()
             outputs = model(inputs)
-            
-            # # sdf channel
-            # sdf_output = outputs[:, 0]
-            # # inside and outside
-            # in_out_output = outputs[:, 1:]
-            #
-            # labels[:, 2] = 1  # move the edge mask flag to inside mask flag
-            # labels_onehot = monai.networks.one_hot(
-            #     labels, args.num_class - 1
-            # )  # (b,cls,256,256)
+            labels_onehot = monai.networks.one_hot(
+                labels, args.num_class
+            )  # (b,cls,256,256)
 
-            loss = loss_function.loss(labels, outputs)
+            # smooth edge
+            # labels_onehot[:, 2, ...] = smooth_transformer(labels_onehot[:, 2, ...])
+
+            loss = 0.8 * loss_function1(outputs, labels_onehot) + \
+                   0.2 * loss_function2(torch.softmax(outputs, dim=1), labels)
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
@@ -280,7 +288,7 @@ def main():
             "loss": epoch_loss_values,
         }
 
-        if epoch >= 0 and epoch % val_interval == 0:
+        if epoch > 20 and epoch % val_interval == 0:
             model.eval()
             with torch.no_grad():
                 val_images = None
@@ -288,28 +296,26 @@ def main():
                 val_outputs = None
                 for val_data in val_loader:
                     val_images, val_labels = val_data["img"].to(device), val_data[
-                        "sdf_label"
+                        "label"
                     ].to(device)
-                    # val_labels_onehot = monai.networks.one_hot(
-                    #     val_labels, args.num_class
-                    # )
+                    val_labels_onehot = monai.networks.one_hot(
+                        val_labels, args.num_class
+                    )
                     roi_size = (256, 256)
                     sw_batch_size = 4
                     val_outputs = sliding_window_inference(
                         val_images, roi_size, sw_batch_size, model
                     )
-                    # val_outputs = [torch.sigmoid(i) for i in decollate_batch(val_outputs)]
-
-                    val_outputs_post = [1 - post_pred(i) for i in decollate_batch(val_outputs)]
-                    val_labels_post = [
-                        1 - post_gt(i) for i in decollate_batch(val_labels)
+                    val_outputs = [post_pred(i) for i in decollate_batch(val_outputs)]
+                    val_labels_onehot = [
+                        post_gt(i) for i in decollate_batch(val_labels_onehot)
                     ]
                     # compute metric for current iteration
                     print(
                         os.path.basename(
                             val_data["img_meta_dict"]["filename_or_obj"][0]
                         ),
-                        dice_metric(y_pred=val_outputs_post, y=val_labels_post),
+                        dice_metric(y_pred=val_outputs, y=val_labels_onehot),
                     )
 
                 # aggregate the final mean dice result
@@ -330,8 +336,8 @@ def main():
                 writer.add_scalar("val_mean_dice", metric, epoch + 1)
                 # plot the last model output as GIF image in TensorBoard with the corresponding image and label
                 plot_2d_or_3d_image(val_images, epoch, writer, index=0, tag="image")
-                plot_2d_or_3d_image(val_labels, epoch, writer, index=0, tag="sdf_label")
-                plot_2d_or_3d_image(torch.sigmoid(val_outputs), epoch, writer, index=0, tag="output")
+                plot_2d_or_3d_image(val_labels, epoch, writer, index=0, tag="label")
+                plot_2d_or_3d_image(val_outputs, epoch, writer, index=0, tag="output")
             if (epoch - best_metric_epoch) > epoch_tolerance:
                 print(
                     f"validation metric does not improve for {epoch_tolerance} epochs! current {epoch=}, {best_metric_epoch=}"

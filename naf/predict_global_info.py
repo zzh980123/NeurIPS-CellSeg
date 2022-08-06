@@ -17,7 +17,8 @@ from models.unetr2d import UNETR2D
 import time
 from skimage import io, segmentation, morphology, measure, exposure
 import tifffile as tif
-from monai.transforms import ResizeD
+from monai.transforms import Resize
+
 
 def normalize_channel(img, lower=1, upper=99):
     non_zero_vals = img[np.nonzero(img)]
@@ -29,7 +30,7 @@ def normalize_channel(img, lower=1, upper=99):
     return img_norm.astype(np.uint8)
 
 def resize(img, new_size):
-    return Resize(spatial_size=new_size, align_corners=True)(img)
+    return Resize(spatial_size=new_size)(img)
 
 def main():
     parser = argparse.ArgumentParser('Baseline for Microscopy image segmentation', add_help=False)
@@ -79,8 +80,10 @@ def main():
                 if len(img_channel_i[np.nonzero(img_channel_i)]) > 0:
                     pre_img_data[:, :, i] = normalize_channel(img_channel_i, lower=1, upper=99)
 
-            pre_img_data_global_info = resize(pre_img_data_global_info, roi_size)
+            pre_img_data_global_info = resize(pre_img_data.transpose(2, 0, 1), roi_size)
             pre_img_data_global_info = fft_highpass_filter(pre_img_data_global_info)
+            pre_img_data_global_info = torch.from_numpy(np.expand_dims(pre_img_data_global_info, 0)).type(torch.FloatTensor).to(device)
+            pre_img_data_global_info = pre_img_data_global_info / pre_img_data_global_info.max()
 
             t0 = time.time()
             test_npy01 = pre_img_data / np.max(pre_img_data)

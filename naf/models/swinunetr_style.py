@@ -19,7 +19,7 @@ from monai.utils import ensure_tuple_rep, optional_import
 rearrange, _ = optional_import("einops", name="rearrange")
 
 
-class SwinUNETRV2(nn.Module):
+class SwinUNETRStyle(nn.Module):
     """
     Swin UNETR based on: "Hatamizadeh et al.,
     Swin UNETR: Swin Transformers for Semantic Segmentation of Brain Tumors in MRI Images
@@ -99,8 +99,7 @@ class SwinUNETRV2(nn.Module):
 
         self.normalize = normalize
 
-        self.swinViT = SwinTransformerDFC(
-            input_shape=img_size,
+        self.swinViT = SwinTransformer(
             in_chans=in_channels,
             embed_dim=feature_size,
             window_size=window_size,
@@ -166,6 +165,8 @@ class SwinUNETRV2(nn.Module):
             norm_name=norm_name,
             res_block=True,
         )
+
+        self.style_encoder = nn.AdaptiveAvgPool2d(1)
 
         self.decoder5 = UnetrUpBlock(
             spatial_dims=spatial_dims,
@@ -270,17 +271,20 @@ class SwinUNETRV2(nn.Module):
                 weights["state_dict"]["module.layers4.0.downsample.norm.bias"]
             )
 
-    def forward(self, x_in, y_in):
+    def forward(self, x_in):
         hidden_states_out = self.swinViT(x_in, self.normalize)
         enc0 = self.encoder1(x_in)
         enc1 = self.encoder2(hidden_states_out[0])
         enc2 = self.encoder3(hidden_states_out[1])
         enc3 = self.encoder4(hidden_states_out[2])
         dec4 = self.encoder10(hidden_states_out[4])
-        dec3 = self.decoder5(dec4, hidden_states_out[3])
-        dec2 = self.decoder4(dec3, enc3)
-        dec1 = self.decoder3(dec2, enc2)
-        dec0 = self.decoder2(dec1, enc1)
+        style = self.style_encoder(dec4)
+        style = torch.mean(style)
+        dec3 = self.decoder5(dec4, hidden_states_out[3]) + style
+        dec2 = self.decoder4(dec3, enc3) + style
+        dec1 = self.decoder3(dec2, enc2) + style
+        dec0 = self.decoder2(dec1, enc1) + style
+
         out = self.decoder1(dec0, enc0)
         logits = self.out(out)
         return logits
@@ -1082,7 +1086,6 @@ class SwinTransformer(nn.Module):
 
     def __init__(
             self,
-            input_shape: Sequence[int],
             in_chans: int,
             embed_dim: int,
             window_size: Sequence[int],
@@ -1124,8 +1127,7 @@ class SwinTransformer(nn.Module):
         self.patch_norm = patch_norm
         self.window_size = window_size
         self.patch_size = patch_size
-        self.patch_embed = PatchEmbedDFC(
-            input_shape=input_shape,
+        self.patch_embed = PatchEmbed(
             patch_size=self.patch_size,
             in_chans=in_chans,
             embed_dim=embed_dim,

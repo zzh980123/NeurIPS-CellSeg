@@ -250,3 +250,4 @@ def fft_highpass_filter(rgb_img, hf_mask_percent=0.1):
     res = np.fft.ifft2(res, axes=(0, 1))
 
     return np.abs(res)
+

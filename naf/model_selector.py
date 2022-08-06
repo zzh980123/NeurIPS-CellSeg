@@ -2,10 +2,12 @@ import monai
 from monai.networks.nets import SwinUNETR
 
 from models import UNETR2D
+from models.swinunetr_dfc_v1 import SwinUNETRV2_DFCv1
 from models.swinunetr_dfc_v2 import SwinUNETR_DFCv2
 from models.swinunetr_dfc_v3 import SwinUNETR_DFCv3
+from models.swinunetr_dfc_v4 import SwinUNETR_DFCv4
+from models.swinunetr_style import SwinUNETRStyle
 from models.swinunetrv2 import SwinUNETRV2
-from models.swinunetrv2_DFC import SwinUNETRV2_DFC
 from models.swinunetrv3 import SwinUNETRV3
 
 
@@ -64,7 +66,7 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
         ).to(device)
 
     if model_name == "swinunetrv2_dfc":
-        model = SwinUNETRV2_DFC(
+        model = SwinUNETRV2_DFCv1(
             img_size=(args.input_size, args.input_size),
             in_channels=in_channels,
             # norm_name="batch",
@@ -83,6 +85,24 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
         ).to(device)
     if model_name == "swinunetr_dfc_v3":
         model = SwinUNETR_DFCv3(
+            img_size=(args.input_size, args.input_size),
+            in_channels=in_channels,
+            # norm_name="batch",
+            out_channels=args.num_class,
+            feature_size=24,  # should be divisible by 12
+            spatial_dims=spatial_dims,
+        ).to(device)
+    if model_name == "swinunetrstyle":
+        model = SwinUNETRStyle(
+            img_size=(args.input_size, args.input_size),
+            in_channels=in_channels,
+            # norm_name="batch",
+            out_channels=args.num_class,
+            feature_size=24,  # should be divisible by 12
+            spatial_dims=spatial_dims,
+        ).to(device)
+    if model_name == "swinunetr_dfc_v4":
+        model = SwinUNETR_DFCv4(
             img_size=(args.input_size, args.input_size),
             in_channels=in_channels,
             # norm_name="batch",
