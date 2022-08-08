@@ -7,12 +7,12 @@ import taichi as ti
 ti.init(arch=ti.gpu)  # Try to run on GPU
 
 quality = 4  # Use a larger value for higher-res simulations
-n_particles, n_grid = 10000 * quality ** 2, 128 * quality
+n_particles, n_grid = 12000 * quality ** 2, 128 * quality
 dx, inv_dx = 1 / n_grid, float(n_grid)
 dt = 1e-4 / quality
 p_vol, p_rho = (dx * 0.5) ** 2, 1
 p_mass = p_vol * p_rho
-E, nu = 5e3, 0.1  # Young's modulus and Poisson's ratio
+E, nu = 5e3, 0.2  # Young's modulus and Poisson's ratio
 mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / (
         (1 + nu) * (1 - 2 * nu))  # Lame parameters
 
@@ -115,10 +115,10 @@ def substep():
 
 @ti.kernel
 def reset():
-    group_size = n_particles // 100
-    w_n = 10
-    w = 0.025 / 4
-    h = 0.1 / 2
+    group_size = n_particles // 50
+    w_n = 5
+    w = 0.025 * 1
+    h = 0.1 * 1.3
     for i in range(n_particles):
         x[i] = [
             ti.random() * h + (1.2 * h) * (i // group_size % w_n),
@@ -172,8 +172,8 @@ for frame in range(20000):
 
     gui.circles(x.to_numpy(),
                 radius=1,
-                palette=[i for i in range(item.shape[0])],
-                palette_indices=item)
+
+)
 
     if gui.is_pressed(ti.GUI.SPACE, ' '):
         np.savez(f'{frame:06d}.npz', pos=x.to_numpy(), items=item.to_numpy())

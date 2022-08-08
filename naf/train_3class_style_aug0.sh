@@ -1,1 +1,2 @@
+# augment only at colorspace
 cd .. && pwd && python ./naf/model_training_3class_enhance_augment.py --data_path ./data/Train_Pre_3class --work_dir ./naf/work_dir/swinunetrstyle_aug_3class --model_name swinunetrstyle

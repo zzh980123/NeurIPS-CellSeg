@@ -258,7 +258,7 @@ import imgaug.augmenters.color as color_aug
 
 class RandBrightnessd(RandomizableTransform, MapTransform, InvertibleTransform):
 
-    def __init__(self, keys: KeysCollection, add=(-30, 30), prob=1.0, allow_missing_keys: bool = False) -> None:
+    def __init__(self, keys: KeysCollection, add=(-20, 20), prob=1.0, allow_missing_keys: bool = False) -> None:
         """
         Args:
             keys: keys of the corresponding items to be transformed.
@@ -293,7 +293,7 @@ class RandBrightnessd(RandomizableTransform, MapTransform, InvertibleTransform):
 
 class RandHueAndSaturationd(RandomizableTransform, MapTransform, InvertibleTransform):
 
-    def __init__(self, keys: KeysCollection, prob=1.0, add=(-50, 50), allow_missing_keys: bool = False) -> None:
+    def __init__(self, keys: KeysCollection, prob=1.0, add=(-30, 30), allow_missing_keys: bool = False) -> None:
         """
         Args:
             keys: keys of the corresponding items to be transformed.
@@ -302,7 +302,7 @@ class RandHueAndSaturationd(RandomizableTransform, MapTransform, InvertibleTrans
         """
         MapTransform.__init__(self, keys, allow_missing_keys)
         RandomizableTransform.__init__(self, prob, do_transform=True)
-        self.changer = color_aug.AddToHueAndSaturation(value=add)
+        self.changer = color_aug.AddToHueAndSaturation(value_hue=add, per_channel=True)
 
     def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
         d = dict(data)
@@ -322,4 +322,27 @@ class RandHueAndSaturationd(RandomizableTransform, MapTransform, InvertibleTrans
             if flag:
                 res = np.transpose(res, axes=(2, 0, 1))
             d[key] = res
+        return d
+
+
+class RandInversed(RandomizableTransform, MapTransform, InvertibleTransform):
+
+    def __init__(self, keys: KeysCollection, prob=1.0, allow_missing_keys: bool = False) -> None:
+        """
+        Args:
+            keys: keys of the corresponding items to be transformed.
+                See also: :py:class:`monai.transforms.compose.MapTransform`
+            allow_missing_keys: don't raise exception if key is missing.
+        """
+        MapTransform.__init__(self, keys, allow_missing_keys)
+        RandomizableTransform.__init__(self, prob, do_transform=True)
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        if random.random() > self.prob:
+            return d
+
+        for key in self.key_iterator(d):
+            data = d[key]
+            d[key] = data.max() - data
         return d

@@ -37,7 +37,7 @@ def main():
     parser.add_argument("--batch_size", default=8, type=int, help="Batch size per GPU")
     parser.add_argument("--max_epochs", default=2000, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
-    parser.add_argument("--epoch_tolerance", default=150, type=int)
+    parser.add_argument("--epoch_tolerance", default=200, type=int)
     parser.add_argument("--initial_lr", type=float, default=6e-4, help="learning rate")
 
     args = parser.parse_args()

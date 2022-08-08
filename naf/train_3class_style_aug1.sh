@@ -1,0 +1,2 @@
+# augment new data: stripe cells
+cd .. && pwd && python ./naf/model_training_3class_enhance_augment.py --data_path ./data/Train_Pre_3class_aug1 --work_dir ./naf/work_dir/swinunetrstyle_aug1_3class --model_name swinunetrstyle

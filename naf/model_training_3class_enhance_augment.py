@@ -6,12 +6,10 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 
 import argparse
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
 from monai.transforms import RandAffined
 
-from transformers.utils import RandBrightnessd, RandHueAndSaturationd
-
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
 def main():
     parser = argparse.ArgumentParser("Baseline for Microscopy image segmentation")
@@ -48,7 +46,7 @@ def main():
 
     from model_selector import model_factory
 
-    from transformers.utils import ConditionChannelNumberd
+    from transformers.utils import ConditionChannelNumberd, RandInversed, RandBrightnessd, RandHueAndSaturationd
     from monai.utils import GridSampleMode
 
     join = os.path.join
@@ -140,8 +138,9 @@ def main():
                 keys=["img"], target_dim=0, channel_num=3, allow_missing_keys=True
             ),
 
-            RandBrightnessd(keys=["img"], prob=0.25),
-            RandHueAndSaturationd(keys=["img"], prob=0.25),
+            RandBrightnessd(keys=["img"], prob=0.25, add=(-80, 80)),
+            RandHueAndSaturationd(keys=["img"], prob=0.25, add=(-100, 100)),
+            RandInversed(keys=["img"], prob=0.125),
 
             ScaleIntensityd(
                 keys=["img"], allow_missing_keys=True
@@ -152,7 +151,7 @@ def main():
             ),
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
             RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
-            RandAffined(keys=["img", "label"], prob=0.15, scale_range=(-0.2, 0.5), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
+            RandAffined(keys=["img", "label"], prob=0.15, rotate_range=(-3.14, 3.14), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
@@ -160,13 +159,13 @@ def main():
             RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2)),
             RandHistogramShiftd(keys=["img"], prob=0.25, num_control_points=3),
 
-            # RandZoomd(
-            #     keys=["img", "label"],
-            #     prob=0.15,
-            #     min_zoom=0.8,
-            #     max_zoom=1.5,
-            #     mode=["area", "nearest"],
-            # ),
+            RandZoomd(
+                keys=["img", "label"],
+                prob=0.15,
+                min_zoom=0.8,
+                max_zoom=1.5,
+                mode=["area", "nearest"],
+            ),
             EnsureTyped(keys=["img", "label"]),
         ]
     )

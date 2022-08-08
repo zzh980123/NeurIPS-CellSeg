@@ -7,7 +7,7 @@ from monai.utils import ensure_tuple
 from numba import jit
 import imageio as io
 
-
+# not used
 def get_image_template(path: str):
     return io.imread_v2(path)
 
