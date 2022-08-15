@@ -459,7 +459,8 @@ class WindowAttention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
         trunc_normal_(self.relative_position_bias_table, std=0.02)
-        self.softmax = nn.Softmax(dim=-1)
+        # self.softmax = nn.Softmax(dim=-1)
+        self.softmax = torch.nn.functional.gumbel_softmax
 
     def forward(self, x, mask):
         b, n, c = x.shape
@@ -476,16 +477,11 @@ class WindowAttention(nn.Module):
             nw = mask.shape[0]
             attn = attn.view(b // nw, nw, self.num_heads, n, n) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, n, n)
-            attn = self.softmax(attn)
+            attn = self.softmax(attn, hard=True)
         else:
-            attn = self.softmax(attn)
+            attn = self.softmax(attn, hard=True)
 
         attn = self.attn_drop(attn)
-        # 2-order attention
-        adj_matrix = torch.sign(1 - attn - 0.5) * 0.5 + 0.5
-        path_length = adj_matrix @ adj_matrix
-
-        attn = attn / (path_length + 1e-5)
 
         x = (attn @ v).transpose(1, 2).reshape(b, n, c)
         x = self.proj(x)

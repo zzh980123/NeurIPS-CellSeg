@@ -12,7 +12,7 @@ dx, inv_dx = 1 / n_grid, float(n_grid)
 dt = 1e-4 / quality
 p_vol, p_rho = (dx * 0.5) ** 2, 1
 p_mass = p_vol * p_rho
-E, nu = 5e3, 0.2  # Young's modulus and Poisson's ratio
+E, nu = 5e3, 0.1  # Young's modulus and Poisson's ratio
 mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / (
         (1 + nu) * (1 - 2 * nu))  # Lame parameters
 
@@ -114,11 +114,12 @@ def substep():
 
 
 @ti.kernel
-def reset():
-    group_size = n_particles // 50
+def stripe_shape_reset():
+    cell_number = 50
+    group_size = n_particles // cell_number
     w_n = 5
-    w = 0.025 * 1
-    h = 0.1 * 1.3
+    w = 0.025 * 0.5
+    h = 0.1 * 1.0
     for i in range(n_particles):
         x[i] = [
             ti.random() * h + (1.2 * h) * (i // group_size % w_n),
@@ -133,50 +134,100 @@ def reset():
         C[i] = ti.Matrix.zero(float, 2, 2)
 
 
-print(
-    "[Hint] Use WSAD/arrow keys to control gravity. Use left/right mouse buttons to attract/repel. Press R to reset."
-)
-gui = ti.GUI("Taichi MLS-MPM-128", res=256, background_color=0)
-reset()
-gravity[None] = [0, 0]
+@ti.kernel
+def circle_uniform_random_sample(radius: float, center_x: float, center_y: float):
+    w, h = radius * 2, radius * 2
+    x_ = y = 0.0
+    while True:
+        zero_one = ti.random()
+        x_ = zero_one * w - radius + center_x
+        y = zero_one * h - radius + center_y
 
-for frame in range(20000):
-    if gui.get_event(ti.GUI.PRESS):
-        if gui.event.key == 'r':
-            reset()
-        elif gui.event.key in [ti.GUI.ESCAPE, ti.GUI.EXIT]:
+        if (x_ - center_x) ** 2 + (y - center_y) ** 2 <= radius ** 2:
             break
-    if gui.event is not None:
-        gravity[None] = [0, 0]  # if had any event
-    if gui.is_pressed(ti.GUI.LEFT, 'a'):
-        gravity[None][0] = -1
-    if gui.is_pressed(ti.GUI.RIGHT, 'd'):
-        gravity[None][0] = 1
-    if gui.is_pressed(ti.GUI.UP, 'w'):
-        gravity[None][1] = 1
-    if gui.is_pressed(ti.GUI.DOWN, 's'):
-        gravity[None][1] = -1
 
-    mouse = gui.get_cursor_pos()
-    gui.circle((mouse[0], mouse[1]), color=0x336699, radius=15)
-    attractor_pos[None] = [mouse[0], mouse[1]]
-    attractor_strength[None] = 0
-    if gui.is_pressed(ti.GUI.LMB):
-        attractor_strength[None] = 1
-    if gui.is_pressed(ti.GUI.RMB):
-        attractor_strength[None] = -1
-    for s in range(int(2e-3 // dt)):
-        substep()
+    return [x_ + radius, y + radius]
 
-    import numpy as np
+@ti.kernel
+def circle_shape_reset():
+    cell_number = 50
+    group_size = n_particles // cell_number
+    w_n = 8
+    center_x = 0.0
+    center_y = 0.0
+    padding_x = 0.001
+    padding_y = 0.001
+    radius = 0.040
+    for i in range(n_particles):
+        x_ = y = 0.0
+        while True:
+            zero_one = ti.random()
+            x_ = zero_one * 2 * radius - radius
+            zero_one = ti.random()
+            y = zero_one * 2 * radius - radius
 
-    gui.circles(x.to_numpy(),
-                radius=1,
+            if x_ ** 2 + y ** 2 <= radius ** 2:
+                break
 
-)
+        center_x = i // group_size % w_n * 2 * (radius + padding_x)
+        center_y = i // (group_size * w_n) * 2 * (radius + padding_y)
+        x[i] = [x_ + radius + 0.1 + center_x, y + radius + 0.1 + center_y]
+        # material[i] = i // group_size  # 0: fluid 1: jelly 2: snow
+        material[i] = 1  # 0: fluid 1: jelly 2: snow
+        item[i] = i // group_size
+        v[i] = [0, 0]
+        F[i] = ti.Matrix([[1, 0], [0, 1]])
+        Jp[i] = 1
+        C[i] = ti.Matrix.zero(float, 2, 2)
 
-    if gui.is_pressed(ti.GUI.SPACE, ' '):
-        np.savez(f'{frame:06d}.npz', pos=x.to_numpy(), items=item.to_numpy())
 
-    # Change to gui.show(f'{frame:06d}.png') to write images to disk
-    gui.show()
+if __name__ == '__main__':
+    # save_dir = "simulation_data_stripe_small"
+    save_dir = "simulation_data_circle_small"
+
+    print(
+        "[Hint] Use WSAD/arrow keys to control gravity. Use left/right mouse buttons to attract/repel. Press R to reset."
+    )
+    gui = ti.GUI("Taichi MLS-MPM-128", res=256, background_color=0)
+    circle_shape_reset()
+    # no gravity
+    gravity[None] = [0, 0]
+
+    for frame in range(20000):
+        if gui.get_event(ti.GUI.PRESS):
+            if gui.event.key == 'r':
+                circle_shape_reset()
+            elif gui.event.key in [ti.GUI.ESCAPE, ti.GUI.EXIT]:
+                break
+        if gui.event is not None:
+            gravity[None] = [0, 0]  # if had any event
+        if gui.is_pressed(ti.GUI.LEFT, 'a'):
+            gravity[None][0] = -1
+        if gui.is_pressed(ti.GUI.RIGHT, 'd'):
+            gravity[None][0] = 1
+        if gui.is_pressed(ti.GUI.UP, 'w'):
+            gravity[None][1] = 1
+        if gui.is_pressed(ti.GUI.DOWN, 's'):
+            gravity[None][1] = -1
+
+        mouse = gui.get_cursor_pos()
+        gui.circle((mouse[0], mouse[1]), color=0x336699, radius=15)
+        attractor_pos[None] = [mouse[0], mouse[1]]
+        attractor_strength[None] = 0
+        if gui.is_pressed(ti.GUI.LMB):
+            attractor_strength[None] = 1
+        if gui.is_pressed(ti.GUI.RMB):
+            attractor_strength[None] = -1
+        for s in range(int(2e-3 // dt)):
+            substep()
+
+        import numpy as np
+
+        gui.circles(x.to_numpy(),
+                    radius=1)
+
+        if gui.is_pressed(ti.GUI.SPACE, ' '):
+            np.savez(f'{save_dir}/{frame:06d}.npz', pos=x.to_numpy(), items=item.to_numpy())
+
+        # Change to gui.show(f'{frame:06d}.png') to write images to disk
+        gui.show()

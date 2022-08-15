@@ -220,8 +220,8 @@ def main():
 
     model = model_factory(args.model_name.lower(), device, args, in_channels=3)
 
-    loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
-    # loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.25, 0.25, 0.5]).to(device))
+    # loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
+    loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.2, 0.4, 0.4]).to(device))
 
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
@@ -251,11 +251,12 @@ def main():
             )  # (b,cls,256,256)
 
             # smooth edge
-            labels_onehot_smooth = smooth_transformer(labels_onehot)
-            diff = (torch.square(labels_onehot - labels_onehot_smooth))
-            diff = diff - diff.max() + 1
+            # labels_onehot_smooth = smooth_transformer(labels_onehot)
+            # diff = (torch.square(labels_onehot - labels_onehot_smooth))
+            # diff = diff - diff.max() + 1
+            outputs[:, 2] *= 2
 
-            loss = loss_function(outputs * diff, labels_onehot)
+            loss = loss_function(outputs, labels_onehot)
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()

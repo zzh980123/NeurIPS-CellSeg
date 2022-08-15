@@ -1,6 +1,9 @@
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
+from transformers.utils import post_process
+
+
 from model_selector import model_factory
 
 join = os.path.join
@@ -47,7 +50,13 @@ def main():
 
     model = model_factory(args.model_name.lower(), device, args, in_channels=3)
 
-    checkpoint = torch.load(join(args.model_path, 'best_Dice_model.pth'), map_location=torch.device(device))
+    # find best model
+    model_path = join(args.model_path, 'best_F1_model.pth')
+    if not os.path.exists(model_path):
+        model_path = join(args.model_path, 'best_Dice_model.pth')
+
+    print(f"Loading {model_path}...")
+    checkpoint = torch.load(model_path, map_location=torch.device(device))
     model.load_state_dict(checkpoint['model_state_dict'])
     # %%
     roi_size = (args.input_size, args.input_size)
@@ -81,6 +90,7 @@ def main():
             test_pred_npy = test_pred_out[0, 1].cpu().numpy()
             # convert probability map to binary mask and apply morphological postprocessing
             test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(test_pred_npy > 0.5), 16))
+            test_pred_mask = post_process(test_pred_mask)
             tif.imwrite(join(output_path, img_name.split('.')[0] + '_label.tiff'), test_pred_mask, compression='zlib')
             t1 = time.time()
             print(f'Prediction finished: {img_name}; img size = {pre_img_data.shape}; costing: {t1 - t0:.2f}s')

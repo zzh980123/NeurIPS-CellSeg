@@ -7,9 +7,13 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+
+from monai.transforms import RandAffined
+from skimage import measure, morphology
+from transformers.utils import CellF1Metric
 from losses import sim
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
 def main():
     parser = argparse.ArgumentParser("Baseline for Microscopy image segmentation")
@@ -41,8 +45,8 @@ def main():
     parser.add_argument("--batch_size", default=8, type=int, help="Batch size per GPU")
     parser.add_argument("--max_epochs", default=3000, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
-    parser.add_argument("--epoch_tolerance", default=100, type=int)
-    parser.add_argument("--initial_lr", type=float, default=6e-4, help="learning rate")
+    parser.add_argument("--epoch_tolerance", default=150, type=int)
+    parser.add_argument("--initial_lr", type=float, default=6e-3, help="learning rate")
 
     args = parser.parse_args()
 
@@ -109,6 +113,7 @@ def main():
     indices = np.arange(img_num)
     np.random.shuffle(indices)
     val_split = int(img_num * val_frac)
+
     train_indices = indices[val_split:]
     val_indices = indices[:val_split]
 
@@ -146,8 +151,9 @@ def main():
             RandSpatialCropd(
                 keys=["img", "label"], roi_size=args.input_size, random_size=False
             ),
+            RandAffined(keys=["img", "label"], prob=0.5, rotate_range=(-3.14, 3.14), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
-            RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
+            # RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
             Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
@@ -156,8 +162,8 @@ def main():
             RandHistogramShiftd(keys=["img"], prob=0.25, num_control_points=3),
             RandZoomd(
                 keys=["img", "label"],
-                prob=0.15,
-                min_zoom=0.8,
+                prob=0.5,
+                min_zoom=0.4,
                 max_zoom=1.5,
                 mode=["area", "nearest"],
             ),
@@ -214,6 +220,7 @@ def main():
     dice_metric = DiceMetric(
         include_background=False, reduction="mean", get_not_nans=False
     )
+    f1_metric = CellF1Metric(get_not_nans=False)
 
     post_pred = Compose(
         [EnsureType(), Activations(softmax=True), AsDiscrete(threshold=0.5)]
@@ -231,9 +238,11 @@ def main():
     initial_lr = args.initial_lr
 
     # smooth_transformer = GaussianSmooth(sigma=1)
-
+    load_model_path = join(args.model_path, 'best_F1_model.pth')
+    if not os.path.exists(load_model_path):
+        load_model_path = join(args.model_path, 'best_Dice_model.pth')
     # load model parameters
-    checkpoint = torch.load(join(args.model_path, 'best_Dice_model.pth'), map_location=torch.device(device))
+    checkpoint = torch.load(load_model_path, map_location=torch.device(device))
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -288,7 +297,7 @@ def main():
             "loss": epoch_loss_values,
         }
 
-        if epoch > 20 and epoch % val_interval == 0:
+        if 'debug' in args.work_dir or (epoch > 20 and epoch % val_interval == 0):
             model.eval()
             with torch.no_grad():
                 val_images = None
@@ -310,34 +319,56 @@ def main():
                     val_labels_onehot = [
                         post_gt(i) for i in decollate_batch(val_labels_onehot)
                     ]
+
+                    outputs_pred_npy = val_outputs[0][1].cpu().numpy()
+                    outputs_label_npy = val_labels_onehot[0][1].cpu().numpy()
+                    # convert probability map to binary mask and apply morphological postprocessing
+                    outputs_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(outputs_pred_npy > 0.5), 16))
+                    outputs_label_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(outputs_label_npy > 0.5), 16))
+
+                    # convert back to tensor for metric computing
+                    outputs_pred_mask = torch.from_numpy(outputs_pred_mask[None, None])
+                    outputs_label_mask = torch.from_numpy(outputs_label_mask[None, None])
+
+                    f1 = f1_metric(y_pred=outputs_pred_mask, y=outputs_label_mask)
+                    dice = dice_metric(y_pred=val_outputs, y=val_labels_onehot)
+
                     # compute metric for current iteration
                     print(
                         os.path.basename(
                             val_data["img_meta_dict"]["filename_or_obj"][0]
-                        ),
-                        dice_metric(y_pred=val_outputs, y=val_labels_onehot),
+                        ), f1, dice
                     )
 
-                # aggregate the final mean dice result
-                metric = dice_metric.aggregate().item()
+                # aggregate the final mean f1 score and dice result
+                f1_metric_ = f1_metric.aggregate()[0].item()
+                dice_metric_ = dice_metric.aggregate().item()
                 # reset the status for next validation round
                 dice_metric.reset()
-                metric_values.append(metric)
-                if metric > best_metric:
-                    best_metric = metric
+                f1_metric.reset()
+                metric_values.append(f1_metric_)
+                if f1_metric_ > best_metric:
+                    best_metric = f1_metric_
                     best_metric_epoch = epoch + 1
-                    torch.save(checkpoint, join(model_path, "best_Dice_model.pth"))
+                    # torch.save(checkpoint, join(model_path, "best_Dice_model.pth"))
+                    torch.save(checkpoint, join(model_path, "best_F1_model.pth"))
                     print("saved new best metric model")
+                # print(
+                #     "current epoch: {} current mean dice: {:.4f} best mean dice: {:.4f} at epoch {}".format(
+                #         epoch + 1, dice_metric, best_metric, best_metric_epoch
+                #     )
+                # )
                 print(
-                    "current epoch: {} current mean dice: {:.4f} best mean dice: {:.4f} at epoch {}".format(
-                        epoch + 1, metric, best_metric, best_metric_epoch
+                    "current epoch: {} current mean f1 score: {:.4f} best mean f1 score: {:.4f} at epoch {}".format(
+                        epoch + 1, f1_metric_, best_metric, best_metric_epoch
                     )
                 )
-                writer.add_scalar("val_mean_dice", metric, epoch + 1)
+                # writer.add_scalar("val_mean_dice", dice_metric_, epoch + 1)
+                writer.add_scalars("val_metrics", {"f1": f1_metric_, "dice": dice_metric_}, epoch + 1)
                 # plot the last model output as GIF image in TensorBoard with the corresponding image and label
                 plot_2d_or_3d_image(val_images, epoch, writer, index=0, tag="image")
                 plot_2d_or_3d_image(val_labels, epoch, writer, index=0, tag="label")
-                plot_2d_or_3d_image(val_outputs, epoch, writer, index=0, tag="output")
+                plot_2d_or_3d_image(val_outputs, epoch, writer, index=0, tag="output", max_channels=3)
             if (epoch - best_metric_epoch) > epoch_tolerance:
                 print(
                     f"validation metric does not improve for {epoch_tolerance} epochs! current {epoch=}, {best_metric_epoch=}"

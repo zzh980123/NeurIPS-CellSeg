@@ -207,14 +207,13 @@ class SwinUNETR_DFCv4(nn.Module):
             res_block=True,
         )
 
-        # Use DFC
         self.decoder1 = UnetrUpBlockDFC(
             spatial_dims=spatial_dims,
             shape=img_size,
             in_channels=feature_size,
-            dfc_rate=1.0,
             out_channels=feature_size,
             kernel_size=3,
+            dfc_rate=0.5,
             upsample_kernel_size=2,
             norm_name=norm_name,
             res_block=False,
@@ -223,6 +222,18 @@ class SwinUNETR_DFCv4(nn.Module):
         self.out = UnetOutBlock(
             spatial_dims=spatial_dims, in_channels=feature_size, out_channels=out_channels
         )  # type: ignore
+
+        # # Use DFC
+        # self.dfc = UnetBasicBlockDFC(  # type: ignore
+        #     img_size,
+        #     spatial_dims,
+        #     out_channels,
+        #     1.0,
+        #     out_channels,
+        #     kernel_size=3,
+        #     stride=1,
+        #     norm_name=norm_name,
+        # )
 
         self.style_encoder = nn.AdaptiveAvgPool2d(1)
 
@@ -283,13 +294,13 @@ class SwinUNETR_DFCv4(nn.Module):
         enc2 = self.encoder3(hidden_states_out[1])
         enc3 = self.encoder4(hidden_states_out[2])
         dec4 = self.encoder10(hidden_states_out[4])
-        style = self.style_encoder(dec4)
-        style = torch.mean(style)
-        dec3 = self.decoder5(dec4, hidden_states_out[3]) + style
-        dec2 = self.decoder4(dec3, enc3) + style
-        dec1 = self.decoder3(dec2, enc2) + style
-        dec0 = self.decoder2(dec1, enc1) + style
-        out = self.decoder1(dec0, enc0) + style
+        # style = self.style_encoder(dec4)
+        # style = torch.mean(style)
+        dec3 = self.decoder5(dec4, hidden_states_out[3])
+        dec2 = self.decoder4(dec3, enc3)
+        dec1 = self.decoder3(dec2, enc2)
+        dec0 = self.decoder2(dec1, enc1)
+        out = self.decoder1(dec0, enc0)
         logits = self.out(out)
         return logits
 
@@ -913,9 +924,9 @@ class SpatialTransformer(nn.Module):
 
 class DeformableConvLayer(nn.Module):
 
-    def __init__(self, shape, in_channel, out_channel, kernel_size, stride, spatial_dims=2, max_view=11, sample_rate=0.366, dfc_rate=1.0, in_channel_fold=True):
+    def __init__(self, shape, in_channel, out_channel, kernel_size, stride, spatial_dims=2, max_view=11, sample_rate=0.1, dfc_rate=1.0, in_channel_group=4, in_channel_fold=True):
         super().__init__()
-        assert 0 <= dfc_rate <= 1 <= dfc_rate * out_channel
+        assert 0 <= dfc_rate <= dfc_rate * out_channel
         self.in_channel = in_channel
         self.out_channel = out_channel
         self.kernel_size = kernel_size
@@ -923,6 +934,7 @@ class DeformableConvLayer(nn.Module):
         self.max_view = max_view
         self.dfc_rate = dfc_rate
         self.in_channel_fold = in_channel_fold
+        self.in_channel_group = in_channel_group
 
         if in_channel_fold:
             self.ic_fd = Conv[Conv.CONV, spatial_dims](
@@ -930,7 +942,7 @@ class DeformableConvLayer(nn.Module):
             )
             self.in_channel = 1
 
-        self.group_size = max(int(((max_view // 2) ** 2) * sample_rate), 2)
+        self.group_size = max(int((max_view ** 2) * sample_rate), 2)
 
         self.fusion = Conv[Conv.CONV, spatial_dims](
             in_channels=self.group_size, out_channels=1, kernel_size=1, stride=1, padding=0
@@ -971,7 +983,7 @@ class DeformableConvLayer(nn.Module):
         # from -1/2 * self.max_view to 1 / 2 * self.max_view
         offset = torch.sigmoid(offset_embed) * self.max_view - self.max_view / 2
         # keep the center should at the  slid window middle position
-        offset -= offset.mean()
+        offset -= offset.mean().detach()
         x_f_list = [x_f[:, i::self.in_channel] for i in range(self.in_channel)]
         one_grid = torch.stack([self.one_grid] * B * self.group_size)
 
@@ -988,9 +1000,10 @@ class DeformableConvLayer(nn.Module):
             f = self.fusion(f.view((B, self.group_size, self.in_channel, H, W))
                             .view(B, self.group_size, self.in_channel * H, W)) \
                 .view((B, self.in_channel, H, W))
+
             out += f
 
-        return self.conv(out)
+        return self.conv(out + x)
 
 
 class PatchEmbedDFC(nn.Module):
@@ -1314,7 +1327,7 @@ class UnetBasicBlockDFC(nn.Module):
         #     conv_only=True,
         # )
         self.conv1 = DeformableConvLayer(
-            shape=shape, in_channel=in_channels, out_channel=out_channels, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=9, dfc_rate=0.5
+            shape=shape, in_channel=in_channels, out_channel=out_channels, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=11, dfc_rate=dfc_rate
         )
         self.conv2 = get_conv_layer(
             spatial_dims, out_channels, out_channels, kernel_size=kernel_size, stride=1, dropout=dropout, conv_only=True

@@ -9,8 +9,13 @@ import os
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
+from skimage import measure, morphology
+
+from transformers.utils import CellF1Metric
+
+
 def main():
-    parser = argparse.ArgumentParser("Baseline for Microscopy image segmentation")
+    parser = argparse.ArgumentParser("Microscopy image segmentation")
     # Dataset parameters
     parser.add_argument(
         "--data_path",
@@ -19,7 +24,7 @@ def main():
         help="training data path; subfolders: images, labels",
     )
     parser.add_argument(
-        "--work_dir", default="./naf/work_dir/view11_elastic", help="path where to save models and logs"
+        "--work_dir", default="debug", help="path where to save models and logs"
     )
     parser.add_argument("--seed", default=2022, type=int)
     # parser.add_argument("--resume", default=False, help="resume from checkpoint")
@@ -27,7 +32,7 @@ def main():
 
     # Model parameters
     parser.add_argument(
-        "--model_name", default="swinunetrv2", help="select mode: unet, unetr, swinunetr， swinunetrv2"
+        "--model_name", default="swinunetr", help="select mode: unet, unetr, swinunetr， swinunetr_dfc_v3"
     )
     parser.add_argument("--num_class", default=3, type=int, help="segmentation classes")
     parser.add_argument(
@@ -37,7 +42,7 @@ def main():
     parser.add_argument("--batch_size", default=8, type=int, help="Batch size per GPU")
     parser.add_argument("--max_epochs", default=2000, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
-    parser.add_argument("--epoch_tolerance", default=200, type=int)
+    parser.add_argument("--epoch_tolerance", default=150, type=int)
     parser.add_argument("--initial_lr", type=float, default=6e-4, help="learning rate")
 
     args = parser.parse_args()
@@ -152,8 +157,8 @@ def main():
             RandHistogramShiftd(keys=["img"], prob=0.25, num_control_points=3),
             RandZoomd(
                 keys=["img", "label"],
-                prob=0.15,
-                min_zoom=0.8,
+                prob=1,
+                min_zoom=0.3,
                 max_zoom=1.5,
                 mode=["area", "nearest"],
             ),
@@ -210,6 +215,7 @@ def main():
     dice_metric = DiceMetric(
         include_background=False, reduction="mean", get_not_nans=False
     )
+    f1_metric = CellF1Metric(get_not_nans=False)
 
     post_pred = Compose(
         [EnsureType(), Activations(softmax=True), AsDiscrete(threshold=0.5)]
@@ -220,8 +226,8 @@ def main():
 
     model = model_factory(args.model_name.lower(), device, args, in_channels=3)
 
-    loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
-    # loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.25, 0.25, 0.5]).to(device))
+    # loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
+    loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.2, 0.3, 0.5]).to(device))
 
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
@@ -292,34 +298,56 @@ def main():
                     val_labels_onehot = [
                         post_gt(i) for i in decollate_batch(val_labels_onehot)
                     ]
+
+                    outputs_pred_npy = val_outputs[0][1].cpu().numpy()
+                    outputs_label_npy = val_labels_onehot[0][1].cpu().numpy()
+                    # convert probability map to binary mask and apply morphological postprocessing
+                    outputs_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(outputs_pred_npy > 0.5), 16))
+                    outputs_label_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(outputs_label_npy > 0.5), 16))
+
+                    # convert back to tensor for metric computing
+                    outputs_pred_mask = torch.from_numpy(outputs_pred_mask[None, None])
+                    outputs_label_mask = torch.from_numpy(outputs_label_mask[None, None])
+
+                    f1 = f1_metric(y_pred=outputs_pred_mask, y=outputs_label_mask)
+                    dice = dice_metric(y_pred=val_outputs, y=val_labels_onehot)
+
                     # compute metric for current iteration
                     print(
                         os.path.basename(
                             val_data["img_meta_dict"]["filename_or_obj"][0]
-                        ),
-                        dice_metric(y_pred=val_outputs, y=val_labels_onehot),
+                        ), f1, dice
                     )
 
-                # aggregate the final mean dice result
-                metric = dice_metric.aggregate().item()
+                # aggregate the final mean f1 score and dice result
+                f1_metric_ = f1_metric.aggregate()[0].item()
+                dice_metric_ = dice_metric.aggregate().item()
                 # reset the status for next validation round
                 dice_metric.reset()
-                metric_values.append(metric)
-                if metric > best_metric:
-                    best_metric = metric
+                f1_metric.reset()
+                metric_values.append(f1_metric_)
+                if f1_metric_ > best_metric:
+                    best_metric = f1_metric_
                     best_metric_epoch = epoch + 1
-                    torch.save(checkpoint, join(model_path, "best_Dice_model.pth"))
+                    # torch.save(checkpoint, join(model_path, "best_Dice_model.pth"))
+                    torch.save(checkpoint, join(model_path, "best_F1_model.pth"))
                     print("saved new best metric model")
+                # print(
+                #     "current epoch: {} current mean dice: {:.4f} best mean dice: {:.4f} at epoch {}".format(
+                #         epoch + 1, dice_metric, best_metric, best_metric_epoch
+                #     )
+                # )
                 print(
-                    "current epoch: {} current mean dice: {:.4f} best mean dice: {:.4f} at epoch {}".format(
-                        epoch + 1, metric, best_metric, best_metric_epoch
+                    "current epoch: {} current mean f1 score: {:.4f} best mean f1 score: {:.4f} at epoch {}".format(
+                        epoch + 1, f1_metric_, best_metric, best_metric_epoch
                     )
                 )
-                writer.add_scalar("val_mean_dice", metric, epoch + 1)
+                writer.add_scalars("val_metrics", {"f1": f1_metric_, "dice": dice_metric_}, epoch + 1)
+
                 # plot the last model output as GIF image in TensorBoard with the corresponding image and label
                 plot_2d_or_3d_image(val_images, epoch, writer, index=0, tag="image")
                 plot_2d_or_3d_image(val_labels, epoch, writer, index=0, tag="label")
-                plot_2d_or_3d_image(val_outputs, epoch, writer, index=0, tag="output")
+                plot_2d_or_3d_image(val_outputs, epoch, writer, index=0, tag="output", max_channels=3)
             if (epoch - best_metric_epoch) > epoch_tolerance:
                 print(
                     f"validation metric does not improve for {epoch_tolerance} epochs! current {epoch=}, {best_metric_epoch=}"

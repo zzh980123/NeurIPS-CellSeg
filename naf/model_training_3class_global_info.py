@@ -159,7 +159,7 @@ def main():
             RandZoomd(
                 keys=["img", "label"],
                 prob=0.15,
-                min_zoom=0.8,
+                min_zoom=0.3,
                 max_zoom=1.5,
                 mode=["area", "nearest"],
             ),

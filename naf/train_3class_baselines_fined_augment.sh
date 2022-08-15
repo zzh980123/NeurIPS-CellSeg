@@ -1,0 +1,2 @@
+cd .. && pwd && python ./naf/model_training_3class_fined.py --data_path ./data/Train_Pre_3class_aug1 --work_dir ./naf/work_dir/swinunetr_baselines_3class_fined_aug1/small --model_name swinunetr_emb48_2262 --model_path ./naf/work_dir/swinunetr_baselines_3class/small/swinunetr_emb48_2262_3class
+#cd .. && pwd && python ./naf/model_training_3class.py --data_path ./data/Train_Pre_3class --work_dir ./naf/work_dir/swinunetrv2_3class --model_name swinunetrv2

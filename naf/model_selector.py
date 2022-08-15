@@ -47,6 +47,16 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
             spatial_dims=spatial_dims
         ).to(device)
 
+    if model_name == 'swinunetr_emb48_2262':
+        model = SwinUNETR(
+            img_size=(args.input_size, args.input_size),
+            in_channels=in_channels,
+            out_channels=args.num_class,
+            feature_size=48,  # should be divisible by 12
+            spatial_dims=spatial_dims,
+            depths=(2, 2, 6, 2),
+        ).to(device)
+
     if model_name == "swinunetrv2":
         model = SwinUNETRV2(
             img_size=(args.input_size, args.input_size),
@@ -61,8 +71,9 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
             in_channels=in_channels,
             norm_name="batch",
             out_channels=args.num_class,
-            feature_size=24,  # should be divisible by 12
+            feature_size=48,  # should be divisible by 12
             spatial_dims=spatial_dims,
+            depths=(2, 2, 6, 2)
         ).to(device)
 
     if model_name == "swinunetrv2_dfc":
@@ -101,6 +112,15 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
             feature_size=24,  # should be divisible by 12
             spatial_dims=spatial_dims,
         ).to(device)
+    if model_name == "swinunetrstyle_emb48_2262":
+        model = SwinUNETRStyle(
+            img_size=(args.input_size, args.input_size),
+            in_channels=in_channels,
+            # norm_name="batch",
+            out_channels=args.num_class,
+            feature_size=48,  # should be divisible by 12
+            spatial_dims=spatial_dims,
+        ).to(device)
     if model_name == "swinunetr_dfc_v4":
         model = SwinUNETR_DFCv4(
             img_size=(args.input_size, args.input_size),
@@ -110,4 +130,16 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
             feature_size=24,  # should be divisible by 12
             spatial_dims=spatial_dims,
         ).to(device)
+
+    if model_name == "swinunetr_dfc_v4_emb48_2262":
+        model = SwinUNETR_DFCv4(
+            img_size=(args.input_size, args.input_size),
+            in_channels=in_channels,
+            # norm_name="batch",
+            out_channels=args.num_class,
+            feature_size=48,  # should be divisible by 12
+            spatial_dims=spatial_dims,
+            depths=(2, 2, 6, 2)
+        ).to(device)
+
     return model

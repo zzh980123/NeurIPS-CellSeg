@@ -1,9 +1,6 @@
 import os
 
 from model_selector import model_factory
-from models.swinunetrv2 import SwinUNETRV2
-from models.swinunetrv2_DFC import SwinUNETRV2_DFC
-from models.swinunetrv3 import SwinUNETRV3
 from my_slid_window.sliding_window_inferebce_with_global_info import sliding_window_inference_g
 from transformers.utils import fft_highpass_filter
 
@@ -11,9 +8,6 @@ join = os.path.join
 import argparse
 import numpy as np
 import torch
-import monai
-from monai.inferers import sliding_window_inference
-from models.unetr2d import UNETR2D
 import time
 from skimage import io, segmentation, morphology, measure, exposure
 import tifffile as tif
