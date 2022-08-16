@@ -1,5 +1,5 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
 
 from transformers.utils import post_process
 
@@ -10,7 +10,6 @@ join = os.path.join
 import argparse
 import numpy as np
 import torch
-import monai
 from monai.inferers import sliding_window_inference
 import time
 from skimage import io, segmentation, morphology, measure, exposure
@@ -38,7 +37,7 @@ def main():
     # Model parameters
     parser.add_argument('--model_name', default='swinunetrv2', help='select mode: unet, unetr, swinunetr，swinunetrv2')
     parser.add_argument('--num_class', default=3, type=int, help='segmentation classes')
-    parser.add_argument('--input_size', default=256, type=int, help='segmentation classes')
+    parser.add_argument('--input_size', default=512, type=int, help='segmentation classes')
     args = parser.parse_args()
 
     input_path = args.input_path

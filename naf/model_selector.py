@@ -46,6 +46,15 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
             feature_size=24,  # should be divisible by 12
             spatial_dims=spatial_dims
         ).to(device)
+    if model_name == 'swinunetr_emb24_2262':
+        model = SwinUNETR(
+            img_size=(args.input_size, args.input_size),
+            in_channels=in_channels,
+            out_channels=args.num_class,
+            depths=(2, 2, 6, 2),
+            feature_size=24,  # should be divisible by 12
+            spatial_dims=spatial_dims
+        ).to(device)
 
     if model_name == 'swinunetr_emb48_2262':
         model = SwinUNETR(
@@ -130,7 +139,15 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
             feature_size=24,  # should be divisible by 12
             spatial_dims=spatial_dims,
         ).to(device)
-
+    if model_name == "swinunetr_dfc_v5":
+        model = SwinUNETR_DFCv4(
+            img_size=(args.input_size, args.input_size),
+            in_channels=in_channels,
+            # norm_name="batch",
+            out_channels=args.num_class,
+            feature_size=24,  # should be divisible by 12
+            spatial_dims=spatial_dims,
+        ).to(device)
     if model_name == "swinunetr_dfc_v4_emb48_2262":
         model = SwinUNETR_DFCv4(
             img_size=(args.input_size, args.input_size),

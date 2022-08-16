@@ -162,6 +162,36 @@ class ConditionSliceChanneld(MapTransform):
         return d
 
 
+class CenterCropByPercentd(MapTransform):
+    def __init__(self, keys: KeysCollection, percent=(0.25, 0.25), allow_missing_keys: bool = False) -> None:
+        """
+        Args:
+            keys: keys of the corresponding items to be transformed.
+                See also: :py:class:`monai.transforms.compose.MapTransform`
+            allow_missing_keys: don't raise exception if key is missing.
+        """
+        super().__init__(keys, allow_missing_keys)
+        self.percent = percent
+        for i in percent:
+            assert 1 >= i > 0
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        for key in self.key_iterator(d):
+            datas = d[key]
+            shape = datas.shape
+            assert len(shape) == 3
+            C, H, W = shape
+            h = int(H * self.percent[0])
+            w = int(W * self.percent[1])
+            start_h = int((H - h) * 0.5)
+            start_w = int((W - w) * 0.5)
+            d[key] = datas[:, start_h: start_h + h, start_w: start_w + w]
+
+
+        return d
+
+
 class FFTFilterd(MapTransform):
     """
         """
@@ -600,14 +630,14 @@ def post_process(label, max_size=60 * 60):
 
     sizes.sort()
 
-    sum(sizes[max_id - 10:max_id])
+    lll = len(sizes[max_id - 10:max_id])
 
-    avg_size = sum(sizes[max_id - 10:max_id]) / 10
+    avg_size = sum(sizes[max_id - 10: max_id]) / lll
 
     if avg_size >= max_size:
         label[label > 0] = 1
         label = binary_erosion(label, iterations=10)
-        label = measure.label(label, background=0)
+        label = measure.label(morphology.remove_small_holes(label, area_threshold=16), background=0)
         label = grey_dilation(label, size=(20, 20))
 
     return label

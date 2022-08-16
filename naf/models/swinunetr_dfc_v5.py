@@ -979,9 +979,12 @@ class DeformableConvLayer(nn.Module):
         offset_embed = self.offset_embedding(self.offset_cov(x)).view((B, self.group_size, dfc_channel, ndim))
 
         x_f = torch.repeat_interleave(x, self.group_size, dim=1)
-
+        scale_ = self.max_view / 2
         # from -1/2 * self.max_view to 1 / 2 * self.max_view
-        offset = torch.sigmoid(offset_embed) * self.max_view - self.max_view / 2
+        normal_offset = torch.sigmoid(offset_embed * scale_)
+        max_offset = normal_offset.max().detach()
+        normal_offset = normal_offset / (max_offset + 1e-5)
+        offset = normal_offset * self.max_view - self.max_view / 2
         # keep the center should at the  slid window middle position
         offset -= offset.mean().detach()
         x_f_list = [x_f[:, i::self.in_channel] for i in range(self.in_channel)]
@@ -1329,22 +1332,47 @@ class UnetBasicBlockDFC(nn.Module):
         # )
 
         self.conv1_0 = DeformableConvLayer(
-            shape=shape, in_channel=in_channels, out_channel=out_channels // 2, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=7, dfc_rate=dfc_rate, sample_rate=0.2
+            shape=shape, in_channel=in_channels, out_channel=out_channels // 4, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=5, dfc_rate=dfc_rate, sample_rate=0.5
         )
         self.conv1_1 = DeformableConvLayer(
-            shape=shape, in_channel=in_channels, out_channel=out_channels // 2, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=15, dfc_rate=dfc_rate, sample_rate=0.08
+            shape=shape, in_channel=in_channels, out_channel=out_channels // 4, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=11, dfc_rate=dfc_rate, sample_rate=0.16
+        )
+        self.conv1_2 = DeformableConvLayer(
+            shape=shape, in_channel=in_channels, out_channel=out_channels // 4, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=23, dfc_rate=dfc_rate, sample_rate=0.04
+        )
+        self.conv1_3 = DeformableConvLayer(
+            shape=shape, in_channel=in_channels, out_channel=out_channels // 4, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=47, dfc_rate=dfc_rate, sample_rate=0.01
+        )
+        self.conv1 = get_conv_layer(
+            spatial_dims, out_channels, out_channels, kernel_size=1, stride=1, dropout=dropout, conv_only=True
         )
         self.conv2 = get_conv_layer(
             spatial_dims, out_channels, out_channels, kernel_size=kernel_size, stride=1, dropout=dropout, conv_only=True
         )
+
+        self.chn_attn = get_conv_layer(
+            spatial_dims, out_channels, out_channels, kernel_size=1, stride=1, dropout=dropout, conv_only=True
+        )
+        self.avg_pool = Pool[Pool.ADAPTIVEAVG, spatial_dims](
+            output_size=1
+        )
+
         self.lrelu = get_act_layer(name=act_name)
         self.norm1 = get_norm_layer(name=norm_name, spatial_dims=spatial_dims, channels=out_channels)
         self.norm2 = get_norm_layer(name=norm_name, spatial_dims=spatial_dims, channels=out_channels)
 
     def forward(self, inp):
+
+        chn_attn_params = self.avg_pool(self.chn_attn(inp))
+
         out_0 = self.conv1_0(inp)
         out_1 = self.conv1_1(inp)
-        out = torch.cat([out_1, out_0], dim=1)
+        out_2 = self.conv1_1(inp)
+        out_3 = self.conv1_1(inp)
+
+        out = torch.cat([out_1, out_0, out_2, out_3], dim=1)
+        out = self.conv1(chn_attn_params * out)
+
         out = self.norm1(out)
         out = self.lrelu(out)
         out = self.conv2(out)

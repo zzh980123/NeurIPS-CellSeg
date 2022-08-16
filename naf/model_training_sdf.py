@@ -41,10 +41,10 @@ def main():
     )
     parser.add_argument("--num_class", default=2, type=int, help="segmentation classes")
     parser.add_argument(
-        "--input_size", default=512, type=int, help="segmentation classes"
+        "--input_size", default=256, type=int, help="segmentation classes"
     )
     # Training parameters
-    parser.add_argument("--batch_size", default=4, type=int, help="Batch size per GPU")
+    parser.add_argument("--batch_size", default=8, type=int, help="Batch size per GPU")
     parser.add_argument("--max_epochs", default=2000, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=150, type=int)
@@ -320,7 +320,7 @@ def main():
                     de = torch.zeros_like(val_images[:, 0:1, ...], device=device, dtype=torch.float32) + 2
                     val_images = torch.cat([val_images, de], dim=1)
 
-                    roi_size = (512, 512)
+                    roi_size = (256, 256)
                     sw_batch_size = 4
                     val_outputs = sliding_window_inference(
                         val_images, roi_size, sw_batch_size, model
@@ -337,7 +337,7 @@ def main():
                     in_out_label[out_bool] = 0
                     in_out_label[in_bool] = 1
                     in_out_label = monai.networks.one_hot(
-                        in_out_label, args.num_class - 1
+                        in_out_label, args.num_class
                     )
                     val_outputs_post = [post_pred(i) for i in decollate_batch(in_out_output)]
                     val_labels_post = [

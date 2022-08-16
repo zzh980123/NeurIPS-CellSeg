@@ -7,7 +7,7 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
 from monai.transforms import RandAffined
 from skimage import measure, morphology
@@ -35,7 +35,7 @@ def main():
     parser.add_argument(
         "--model_name", default="swinunetr_dfc_v3", help="select mode: unet, unetr, swinunetr， swinunetrv2"
     )
-    parser.add_argument('--model_path', default='./naf/work_dir/swinunetr_dfc_v3', help='path where to save models and segmentation results')
+    parser.add_argument('--model_path', default='./naf/work_dir/swinunetr', help='path where to save models and segmentation results')
 
     parser.add_argument("--num_class", default=3, type=int, help="segmentation classes")
     parser.add_argument(
@@ -166,6 +166,7 @@ def main():
                 min_zoom=0.4,
                 max_zoom=1.5,
                 mode=["area", "nearest"],
+                padding_mode="constant"
             ),
             EnsureTyped(keys=["img", "label"]),
         ]

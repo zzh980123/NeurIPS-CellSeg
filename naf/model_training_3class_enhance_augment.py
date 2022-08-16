@@ -6,7 +6,7 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 
 import argparse
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
 from transformers.utils import CellF1Metric
 
@@ -84,6 +84,7 @@ def main():
         EnsureType, EnsureChannelFirstd,
         Rand2DElasticd, GaussianSmooth
     )
+
     from monai.visualize import plot_2d_or_3d_image
     from datetime import datetime
     import shutil
@@ -169,6 +170,7 @@ def main():
                 min_zoom=0.2,
                 max_zoom=1.5,
                 mode=["area", "nearest"],
+                padding_mode="constant"
             ),
             EnsureTyped(keys=["img", "label"]),
         ]

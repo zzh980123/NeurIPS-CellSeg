@@ -70,7 +70,7 @@ import random
 import copy
 
 
-def random_color_inside_cell_label(img, dec=1, base_color_dec=.1, base_color=10, ol=128, shadow=128, bgc=120, in_1=1, in_2=2):
+def random_color_inside_cell_label(img, dec=1.0, base_color_dec=.1, base_color=10, ol=128, shadow=128, bgc=120, in_1=1, in_2=2):
     idx_list = list(np.unique(img))
 
     # remove background
@@ -183,7 +183,7 @@ def gen_circle_small_cells(start_cell_num=1114):
     image_dir = "gen/circle_small_light/gen_imgs"
     convert_sim_data2png(simulation_data_dir, label_dir)
 
-    return default_image_generate(image_dir, label_dir, start_cell_num=idx, shadow=-200, base_color=120, ol=200, bg_color=30, in_2=6)
+    return default_image_generate(image_dir, label_dir, start_cell_num=idx, shadow=-20, base_color=140, ol=20, bg_color=20, in_2=6)
 
 
 def default_image_generate(image_dir, label_dir, start_cell_num=1001, base_color=200, ol=220, shadow=100, bg_color=120, in_1=1, in_2=2):
@@ -192,7 +192,7 @@ def default_image_generate(image_dir, label_dir, start_cell_num=1001, base_color
     for l in tqdm.tqdm(labels, total=len(labels)):
         img = io.imread_v2(l)
         file_name = os.path.basename(l)
-        rand_img = random_color_inside_cell_label(img, base_color=base_color, ol=ol, shadow=shadow, base_color_dec=1, bgc=bg_color, in_1=in_1, in_2=in_2)
+        rand_img = random_color_inside_cell_label(img, dec=0.3, base_color=base_color, ol=ol, shadow=shadow, base_color_dec=0.6, bgc=bg_color, in_1=in_1, in_2=in_2)
         io.imwrite(check_and_create(f"{image_dir}/{file_name.replace('_label', '')}"), rand_img)
         # io.imwrite(f"{image_dir}/{file_name.replace('_label', '_reverse')}", 255 - rand_img)
 
