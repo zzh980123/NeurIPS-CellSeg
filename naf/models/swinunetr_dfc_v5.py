@@ -20,7 +20,7 @@ rearrange, _ = optional_import("einops", name="rearrange")
 
 
 # Add style encode fusion
-class SwinUNETR_DFCv4(nn.Module):
+class SwinUNETR_DFCv5(nn.Module):
     """
     Swin UNETR based on: "Hatamizadeh et al.,
     Swin UNETR: Swin Transformers for Semantic Segmentation of Brain Tumors in MRI Images
@@ -294,12 +294,12 @@ class SwinUNETR_DFCv4(nn.Module):
         enc2 = self.encoder3(hidden_states_out[1])
         enc3 = self.encoder4(hidden_states_out[2])
         dec4 = self.encoder10(hidden_states_out[4])
-        # style = self.style_encoder(dec4)
-        # style = torch.mean(style)
+        style = self.style_encoder(dec4)
+        style = torch.mean(style)
         dec3 = self.decoder5(dec4, hidden_states_out[3])
         dec2 = self.decoder4(dec3, enc3)
         dec1 = self.decoder3(dec2, enc2)
-        dec0 = self.decoder2(dec1, enc1)
+        dec0 = self.decoder2(dec1, enc1) + style
         out = self.decoder1(dec0, enc0)
         logits = self.out(out)
         return logits
@@ -1351,7 +1351,7 @@ class UnetBasicBlockDFC(nn.Module):
         )
 
         self.chn_attn = get_conv_layer(
-            spatial_dims, out_channels, out_channels, kernel_size=1, stride=1, dropout=dropout, conv_only=True
+            spatial_dims, in_channels, out_channels, kernel_size=1, stride=1, dropout=dropout, conv_only=True
         )
         self.avg_pool = Pool[Pool.ADAPTIVEAVG, spatial_dims](
             output_size=1
@@ -1363,7 +1363,7 @@ class UnetBasicBlockDFC(nn.Module):
 
     def forward(self, inp):
 
-        chn_attn_params = self.avg_pool(self.chn_attn(inp))
+        chn_attn_params = torch.softmax(self.avg_pool(self.chn_attn(inp)), dim=1)
 
         out_0 = self.conv1_0(inp)
         out_1 = self.conv1_1(inp)

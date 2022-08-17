@@ -7,4 +7,6 @@ class CutNet(nn.Module):
         self.cut_net = nets.ViT(in_channels=in_channels + 1, img_size=img_size, patch_size=2, num_classes=1, spatial_dims=2, num_layers=6)
 
     def forward(self, x):
-        pass
+        inout_map = self.seg_net(x)
+
+

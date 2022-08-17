@@ -36,7 +36,7 @@ def main():
 
     # Model parameters
     parser.add_argument('--model_name', default='swinunetrv2', help='select mode: unet, unetr, swinunetr，swinunetrv2')
-    parser.add_argument('--num_class', default=3, type=int, help='segmentation classes')
+    parser.add_argument('--num_class', default=2, type=int, help='segmentation classes')
     parser.add_argument('--input_size', default=256, type=int, help='segmentation classes')
     args = parser.parse_args()
 
@@ -47,7 +47,7 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = model_factory(args.model_name.lower(), device, args, in_channels=3)
+    model = model_factory(args.model_name.lower(), device, args, in_channels=4)
 
     # find best model
     model_path = join(args.model_path, 'best_F1_model.pth')
@@ -83,7 +83,12 @@ def main():
 
             t0 = time.time()
             test_npy01 = pre_img_data / np.max(pre_img_data)
+            H, W, C = test_npy01.shape
+            ls = torch.ones(1, 1, H, W, dtype=torch.float32).to(device) * 2
+
             test_tensor = torch.from_numpy(np.expand_dims(test_npy01, 0)).permute(0, 3, 1, 2).type(torch.FloatTensor).to(device)
+
+            test_tensor = torch.cat([test_tensor, ls], dim=1)
             test_pred_out = sliding_window_inference(test_tensor, roi_size, sw_batch_size, model)
             test_pred_out = torch.nn.functional.softmax(test_pred_out, dim=1)  # (B, C, H, W)
             test_pred_npy = test_pred_out[0, 1].cpu().numpy()

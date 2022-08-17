@@ -6,6 +6,7 @@ from models.swinunetr_dfc_v1 import SwinUNETRV2_DFCv1
 from models.swinunetr_dfc_v2 import SwinUNETR_DFCv2
 from models.swinunetr_dfc_v3 import SwinUNETR_DFCv3
 from models.swinunetr_dfc_v4 import SwinUNETR_DFCv4
+from models.swinunetr_dfc_v5 import SwinUNETR_DFCv5
 from models.swinunetr_style import SwinUNETRStyle
 from models.swinunetrv2 import SwinUNETRV2
 from models.swinunetrv3 import SwinUNETRV3
@@ -140,7 +141,7 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
             spatial_dims=spatial_dims,
         ).to(device)
     if model_name == "swinunetr_dfc_v5":
-        model = SwinUNETR_DFCv4(
+        model = SwinUNETR_DFCv5(
             img_size=(args.input_size, args.input_size),
             in_channels=in_channels,
             # norm_name="batch",

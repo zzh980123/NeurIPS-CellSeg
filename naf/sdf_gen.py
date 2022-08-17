@@ -322,9 +322,9 @@ def normalize_channel(img, lower=1, upper=99):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Preprocessing for microscopy image segmentation (from 3class to sdf)', add_help=False)
-    parser.add_argument('-i', '--input_path', default='./data/Train_Pre_3class', type=str,
+    parser.add_argument('-i', '--input_path', default='./data/Train_Pre_3class_aug1', type=str,
                         help='3class data path; subfolders: images, labels')
-    parser.add_argument("-o", '--output_path', default='./data/Train_Pre_sdf', type=str, help='preprocessing data path')
+    parser.add_argument("-o", '--output_path', default='./data/Train_Pre_sdf_aug1', type=str, help='preprocessing data path')
     args = parser.parse_args()
 
     source_path = args.input_path

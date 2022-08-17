@@ -224,7 +224,7 @@ def main():
     f1_metric = CellF1Metric(get_not_nans=False)
 
     post_pred = Compose(
-        [EnsureType(), Activations(softmax=True), AsDiscrete(threshold=0.5)]
+        [EnsureType(), Activations(sigmoid=True), AsDiscrete(threshold=0.5)]
     )
     post_gt = Compose([EnsureType(), AsDiscrete(threshold=0.5)])
     # create UNet, DiceLoss and Adam optimizer
@@ -258,33 +258,46 @@ def main():
             inputs, labels = batch_data["img"].to(device), batch_data["sdf_label"].to(
                 device
             )
-            s = random.gauss(2, 2)
+
+            s = 1
 
             de = torch.ones_like(inputs[:, 0:1, ...], device=device, dtype=torch.float32) * s
             inputs = torch.cat([inputs, de], dim=1)
 
             optimizer.zero_grad()
             outputs = model(inputs)
+            outputs = torch.sigmoid(outputs)
 
             # labels[:, 2] = 1  # move the edge mask flag to inside mask flag
             # labels_onehot = monai.networks.one_hot(
             #     labels, args.num_class - 1
             # )  # (b,cls,256,256)
 
-            in_out_label = labels.clone()
+            in_out_label1 = labels.clone()
+            in_out_label2 = labels.clone()
+            in_out_label3 = labels.clone()
 
-            out_bool = in_out_label > 0.5 - s / 256
+            outter_bool = labels < 0.5 + s / 256
+            inner_bool = labels < 0.5 - s / 256
 
-            in_bool = torch.logical_not(out_bool)
-            in_out_label[out_bool] = 0
-            in_out_label[in_bool] = 1
+            # inner label
+            in_out_label1[inner_bool] = 1
+            in_out_label1[~inner_bool] = 0
+            in_out_label2[outter_bool] = 1
+            in_out_label2[~outter_bool] = 0
+            outline_bool = inner_bool ^ outter_bool
+            in_out_label3[outline_bool] = 1
+            in_out_label3[~outline_bool] = 0
 
-            # print(in_out_label.max(),in_out_label.min())
-            labels_onehot = monai.networks.one_hot(
-                in_out_label, 2
-            )  # (b,cls,256,256)
+            inout = torch.cat([in_out_label1, in_out_label2], dim=1)
 
-            loss = loss_function(outputs, labels_onehot)
+            prob_inner = outputs[:, 0:1]
+            prob_outter = outputs[:, 1:2]
+
+            prob_outline = (1 - prob_inner) * prob_outter
+
+            loss = 0.5 * loss_function(prob_outline, in_out_label3.to(device)) + 0.5 * loss_function(outputs, inout.to(device))
+
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
@@ -328,29 +341,38 @@ def main():
 
                     # sdf channel
                     # inside and outside
-                    in_out_output = val_outputs
 
-                    in_out_label = val_labels.clone()
+                    in_out_label1 = val_labels.clone()
+                    in_out_label2 = val_labels.clone()
+                    in_out_label3 = val_labels.clone()
 
-                    out_bool = in_out_label > 0.5 - 1 / 256
-                    in_bool = torch.logical_not(out_bool)
-                    in_out_label[out_bool] = 0
-                    in_out_label[in_bool] = 1
-                    in_out_label = monai.networks.one_hot(
-                        in_out_label, args.num_class
-                    )
-                    val_outputs_post = [post_pred(i) for i in decollate_batch(in_out_output)]
+                    outter_bool = in_out_label1 < 0.5 + 1 / 256
+                    inner_bool = in_out_label1 < 0.5 - 1 / 256
+
+                    # inner label
+                    in_out_label1[inner_bool] = 1
+                    in_out_label1[~inner_bool] = 0
+                    in_out_label2[outter_bool] = 1
+                    in_out_label2[~outter_bool] = 0
+                    outline_bool = inner_bool ^ outter_bool
+                    in_out_label3[outline_bool] = 1
+                    in_out_label3[~outline_bool] = 0
+
+                    in_out_label = in_out_label1
+
+                    val_outputs_post = [post_pred(i) for i in decollate_batch(val_outputs)]
                     val_labels_post = [
-                        post_gt(i) for i in decollate_batch(in_out_label)
+                        post_gt(i) for i in decollate_batch(in_out_label1)
                     ]
 
-                    val_outputs_, val_labels_ = sem2ins_label(val_outputs_post, val_labels_post)
+                    val_outputs_, val_labels_ = sem2ins_label(val_outputs_post, val_labels_post, dim=0)
 
                     val_outputs_ = torch.from_numpy(dilation(val_outputs_.numpy()))
                     f1_metric_ = f1_metric(y_pred=val_outputs_, y=val_labels_)
                     dice_metric_ = dice_metric(y_pred=val_outputs_post, y=val_labels_post)
                     val_outputs = val_outputs_post[0]
                     display_inout_label = in_out_label
+
                     pic_name = os.path.basename(
                         val_data["img_meta_dict"]["filename_or_obj"][0]
                     )

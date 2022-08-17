@@ -5,8 +5,8 @@ import numpy as np
 # path = '/media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Labeled/labels/cell_00143_label.tiff'
 
 def view_label_3class(path, path_src):
-    path = '../../data/Train_Pre_3class/labels/cell_00001_label.png'
-    path_src = '../../data/Train_Pre_3class/images/cell_00001.png'
+    path = '../../data/Train_Pre_3class/labels/cell_00038_label.png'
+    path_src = '../../data/Train_Pre_3class/images/cell_00038.png'
     # label = tif.imread(path)
     label = imageio.imread_v2(path)
     src = imageio.imread_v2(path_src)
@@ -38,6 +38,7 @@ def view_label_3class(path, path_src):
     imageio.imwrite("view.png", label)
     imageio.imwrite("view_src.png", src)
 
+
 def view_label_sdf(path):
     path = 'cell_00001_label.png'
     label = imageio.imread_v2(path)
@@ -50,5 +51,5 @@ def view_label_sdf(path):
 
 
 if __name__ == '__main__':
-    view_label_sdf("")
+    # view_label_sdf("")
     view_label_3class("", "")
