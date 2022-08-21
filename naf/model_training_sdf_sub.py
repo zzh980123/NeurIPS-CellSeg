@@ -296,7 +296,7 @@ def main():
 
             prob_outline = (1 - prob_inner) * prob_outter
 
-            loss = 0.5 * loss_function(prob_outline, in_out_label3.to(device)) + 0.5 * loss_function(outputs, inout.to(device))
+            loss = 0.3 * loss_function(prob_outline, in_out_label3.to(device)) + 0.7 * loss_function(outputs, inout.to(device))
 
             loss.backward()
             optimizer.step()
@@ -362,7 +362,7 @@ def main():
 
                     val_outputs_post = [post_pred(i) for i in decollate_batch(val_outputs)]
                     val_labels_post = [
-                        post_gt(i) for i in decollate_batch(in_out_label1)
+                        1 - post_gt(i) for i in decollate_batch(in_out_label1)
                     ]
 
                     val_outputs_, val_labels_ = sem2ins_label(val_outputs_post, val_labels_post, dim=0)

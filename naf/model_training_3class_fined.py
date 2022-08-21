@@ -7,7 +7,7 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 from monai.transforms import RandAffined
 from skimage import measure, morphology

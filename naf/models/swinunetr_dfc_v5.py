@@ -1331,18 +1331,19 @@ class UnetBasicBlockDFC(nn.Module):
         #     conv_only=True,
         # )
 
-        self.conv1_0 = DeformableConvLayer(
-            shape=shape, in_channel=in_channels, out_channel=out_channels // 4, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=5, dfc_rate=dfc_rate, sample_rate=0.5
+        self.conv1_0 = get_conv_layer(
+            spatial_dims, in_channels, out_channels // 4, kernel_size=3, stride=1, dropout=dropout, conv_only=True
         )
-        self.conv1_1 = DeformableConvLayer(
-            shape=shape, in_channel=in_channels, out_channel=out_channels // 4, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=11, dfc_rate=dfc_rate, sample_rate=0.16
+        self.conv1_1 = get_conv_layer(
+            spatial_dims, in_channels, out_channels // 4, kernel_size=7, stride=1, dropout=dropout, conv_only=True
         )
         self.conv1_2 = DeformableConvLayer(
-            shape=shape, in_channel=in_channels, out_channel=out_channels // 4, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=23, dfc_rate=dfc_rate, sample_rate=0.04
+            shape=shape, in_channel=in_channels, out_channel=out_channels // 4, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=15, dfc_rate=dfc_rate, sample_rate=0.1
         )
         self.conv1_3 = DeformableConvLayer(
-            shape=shape, in_channel=in_channels, out_channel=out_channels // 4, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=47, dfc_rate=dfc_rate, sample_rate=0.01
+            shape=shape, in_channel=in_channels, out_channel=out_channels // 4, kernel_size=kernel_size, stride=stride, spatial_dims=2, max_view=31, dfc_rate=dfc_rate, sample_rate=0.05
         )
+
         self.conv1 = get_conv_layer(
             spatial_dims, out_channels, out_channels, kernel_size=1, stride=1, dropout=dropout, conv_only=True
         )
@@ -1371,7 +1372,7 @@ class UnetBasicBlockDFC(nn.Module):
         out_3 = self.conv1_1(inp)
 
         out = torch.cat([out_1, out_0, out_2, out_3], dim=1)
-        out = self.conv1(chn_attn_params * out)
+        out = self.conv1(chn_attn_params * out + out)
 
         out = self.norm1(out)
         out = self.lrelu(out)

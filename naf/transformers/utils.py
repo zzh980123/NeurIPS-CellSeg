@@ -614,8 +614,37 @@ def sem2ins_label(outputs, labels_onehot, dim=1):
 
     return outputs_pred_mask, outputs_label_mask
 
+# Obtained from cellpose: https://github.com/MouseLand/cellpose/blob/91dd7abce332a30ead85e10e7c244bfa876c9a2d/cellpose/utils.py#L325
+def get_masks_unet(output, cell_threshold=0, boundary_threshold=0):
+    """ create masks using cell probability and cell boundary """
+    cells = (output[..., 1] - output[..., 0]) > cell_threshold
+    selem = generate_binary_structure(cells.ndim, connectivity=1)
+    labels, nlabels = measure.label(cells, selem)
 
-from scipy.ndimage import binary_erosion, grey_dilation
+    if output.shape[-1] > 2:
+        slices = find_objects(labels)
+        dists = 10000 * np.ones(labels.shape, np.float32)
+        mins = np.zeros(labels.shape, np.int32)
+        borders = np.logical_and(~(labels > 0), output[..., 2] > boundary_threshold)
+        pad = 10
+        for i, slc in enumerate(slices):
+            if slc is not None:
+                slc_pad = tuple([slice(max(0, sli.start - pad), min(labels.shape[j], sli.stop + pad))
+                                 for j, sli in enumerate(slc)])
+                msk = (labels[slc_pad] == (i + 1)).astype(np.float32)
+                msk = 1 - gaussian_filter(msk, 5)
+                dists[slc_pad] = np.minimum(dists[slc_pad], msk)
+                mins[slc_pad][dists[slc_pad] == msk] = (i + 1)
+        labels[labels == 0] = borders[labels == 0] * mins[labels == 0]
+
+    masks = labels
+    shape0 = masks.shape
+    _, masks = np.unique(masks, return_inverse=True)
+    masks = np.reshape(masks, shape0)
+    return masks
+
+
+from scipy.ndimage import binary_erosion, grey_dilation, generate_binary_structure, find_objects, gaussian_filter
 
 
 def post_process(label, max_size=60 * 60):
