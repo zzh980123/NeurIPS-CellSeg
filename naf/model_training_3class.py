@@ -6,8 +6,9 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 
 import argparse
 import os
+import tqdm
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
 from skimage import measure, morphology
 
@@ -149,11 +150,11 @@ def main():
             ),
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
             RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
-            Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
+            # Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
-            RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2)),
+            RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2), sigma_y=(1, 2)),
             RandHistogramShiftd(keys=["img"], prob=0.25, num_control_points=3),
             RandZoomd(
                 keys=["img", "label"],
@@ -247,7 +248,8 @@ def main():
     for epoch in range(1, max_epochs):
         model.train()
         epoch_loss = 0
-        for step, batch_data in enumerate(train_loader, 1):
+        train_bar = tqdm.tqdm(enumerate(train_loader, 1), total=len(train_loader))
+        for step, batch_data in train_bar:
             inputs, labels = batch_data["img"].to(device), batch_data["label"].to(
                 device
             )
@@ -265,8 +267,10 @@ def main():
             optimizer.step()
             epoch_loss += loss.item()
             epoch_len = len(train_ds) // train_loader.batch_size
-            print(f"{step - 1}/{epoch_len}, train_loss: {loss.item():.4f}")
+
+            train_bar.set_postfix_str(f"train_loss: {loss.item():.4f}")
             writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)
+
         epoch_loss /= step
         epoch_loss_values.append(epoch_loss)
         print(f"epoch {epoch} average loss: {epoch_loss:.4f}")
@@ -283,15 +287,18 @@ def main():
                 val_images = None
                 val_labels = None
                 val_outputs = None
-                for val_data in val_loader:
+                val_bar = tqdm.tqdm(enumerate(val_loader, 1), total=len(train_loader))
+
+                for val_data in val_bar:
                     val_images, val_labels = val_data["img"].to(device), val_data[
                         "label"
                     ].to(device)
                     val_labels_onehot = monai.networks.one_hot(
                         val_labels, args.num_class
                     )
-                    roi_size = (256, 256)
-                    sw_batch_size = 4
+                    roi_size = (args.input_size, args.input_size)
+                    sw_batch_size = args.batch_size
+
                     val_outputs = sliding_window_inference(
                         val_images, roi_size, sw_batch_size, model
                     )
@@ -314,11 +321,15 @@ def main():
                     dice = dice_metric(y_pred=val_outputs, y=val_labels_onehot)
 
                     # compute metric for current iteration
-                    print(
-                        os.path.basename(
+                    # print(
+                    #     os.path.basename(
+                    #         val_data["img_meta_dict"]["filename_or_obj"][0]
+                    #     ), f1, dice
+                    # )
+
+                    val_bar.set_postfix_str(os.path.basename(
                             val_data["img_meta_dict"]["filename_or_obj"][0]
-                        ), f1, dice
-                    )
+                        ) + str(f1) + str(dice))
 
                 # aggregate the final mean f1 score and dice result
                 f1_metric_ = f1_metric.aggregate()[0].item()

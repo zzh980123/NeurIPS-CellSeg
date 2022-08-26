@@ -644,7 +644,7 @@ def get_masks_unet(output, cell_threshold=0, boundary_threshold=0):
     return masks
 
 
-from scipy.ndimage import binary_erosion, grey_dilation, generate_binary_structure, find_objects, gaussian_filter
+from scipy.ndimage import binary_erosion, grey_dilation, generate_binary_structure, find_objects, gaussian_filter, binary_dilation
 
 
 def post_process(label, max_size=60 * 60):
@@ -665,8 +665,10 @@ def post_process(label, max_size=60 * 60):
 
     if avg_size >= max_size:
         label[label > 0] = 1
-        label = binary_erosion(label, iterations=10)
+        # label = ~binary_dilation(~label, iterations=2)
+        iter_ = max(int(avg_size ** .5) // 8, 1)
+        label = binary_erosion(label, iterations=iter_)
         label = measure.label(morphology.remove_small_holes(label, area_threshold=16), background=0)
-        label = grey_dilation(label, size=(20, 20))
+        label = grey_dilation(label, size=(iter_ * 2, iter_ * 2))
 
     return label

@@ -6,8 +6,13 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 
 import argparse
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+import tqdm
+from skimage import measure, morphology
+
+from transformers.utils import CellF1Metric
+
 
 def main():
     parser = argparse.ArgumentParser("Baseline for Microscopy image segmentation")
@@ -144,17 +149,17 @@ def main():
             ),
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
             RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
-            Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
+            # Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
-            RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2)),
+            RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2), sigma_y=(1, 2)),
             RandHistogramShiftd(keys=["img"], prob=0.25, num_control_points=3),
             RandZoomd(
                 keys=["img", "label"],
                 prob=0.15,
-                min_zoom=0.8,
-                max_zoom=1.5,
+                min_zoom=0.2,
+                max_zoom=5,
                 mode=["area", "nearest"],
             ),
             EnsureTyped(keys=["img", "label"]),
@@ -210,6 +215,7 @@ def main():
     dice_metric = DiceMetric(
         include_background=False, reduction="mean", get_not_nans=False
     )
+    f1_metric = CellF1Metric(get_not_nans=False)
 
     post_pred = Compose(
         [EnsureType(), Activations(softmax=True), AsDiscrete(threshold=0.5)]
@@ -227,7 +233,7 @@ def main():
 
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
-    smooth_transformer = GaussianSmooth(sigma=1)
+    # smooth_transformer = GaussianSmooth(sigma=1)
 
     # start a typical PyTorch training
     max_epochs = args.max_epochs
@@ -242,12 +248,14 @@ def main():
     for epoch in range(1, max_epochs):
         model.train()
         epoch_loss = 0
-        for step, batch_data in enumerate(train_loader, 1):
-            inputs, labels = batch_data["img"].to(device), batch_data["label"].to(
+        train_bar = tqdm.tqdm(enumerate(train_loader, 1), total=len(train_loader))
+
+        for step, batch_data in train_bar:
+            inputs, labels = batch_data["img"].half().to(device), batch_data["label"].half().to(
                 device
             )
             optimizer.zero_grad()
-            with autocast():
+            with autocast(enabled=True):
                 outputs = model(inputs)
                 labels_onehot = monai.networks.one_hot(
                     labels, args.num_class
@@ -257,12 +265,17 @@ def main():
                 # labels_onehot[:, 2, ...] = smooth_transformer(labels_onehot[:, 2, ...])
 
                 loss = loss_function(outputs.float(), labels_onehot.float())
+
             scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             scaler.step(optimizer)
             scaler.update()
+
             epoch_loss += loss.item()
             epoch_len = len(train_ds) // train_loader.batch_size
-            print(f"{step - 1}/{epoch_len}, train_loss: {loss.item():.4f}")
+            # print(f"{step - 1}/{epoch_len}, train_loss: {loss.item():.4f}")
+            train_bar.set_postfix_str(f"train_loss: {loss.item():.4f}")
+
             writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)
         epoch_loss /= step
         epoch_loss_values.append(epoch_loss)
@@ -280,15 +293,17 @@ def main():
                 val_images = None
                 val_labels = None
                 val_outputs = None
+                val_bar = tqdm.tqdm(enumerate(val_loader, 1), total=len(train_loader))
+
                 for val_data in val_loader:
-                    val_images, val_labels = val_data["img"].to(device), val_data[
+                    val_images, val_labels = val_data["img"].half().to(device), val_data[
                         "label"
-                    ].to(device)
+                    ].half().to(device)
                     val_labels_onehot = monai.networks.one_hot(
                         val_labels, args.num_class
                     )
-                    roi_size = (256, 256)
-                    sw_batch_size = 4
+                    roi_size = (args.input_size, args.input_size)
+                    sw_batch_size = args.batch_size
                     val_outputs = sliding_window_inference(
                         val_images, roi_size, sw_batch_size, model
                     )
@@ -296,30 +311,53 @@ def main():
                     val_labels_onehot = [
                         post_gt(i) for i in decollate_batch(val_labels_onehot)
                     ]
-                    # compute metric for current iteration
-                    print(
-                        os.path.basename(
-                            val_data["img_meta_dict"]["filename_or_obj"][0]
-                        ),
-                        dice_metric(y_pred=val_outputs, y=val_labels_onehot),
-                    )
 
-                # aggregate the final mean dice result
-                metric = dice_metric.aggregate().item()
+                    outputs_pred_npy = val_outputs[0][1].cpu().numpy()
+                    outputs_label_npy = val_labels_onehot[0][1].cpu().numpy()
+                    # convert probability map to binary mask and apply morphological postprocessing
+                    outputs_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(outputs_pred_npy > 0.5), 16))
+                    outputs_label_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(outputs_label_npy > 0.5), 16))
+
+                    # convert back to tensor for metric computing
+                    outputs_pred_mask = torch.from_numpy(outputs_pred_mask[None, None])
+                    outputs_label_mask = torch.from_numpy(outputs_label_mask[None, None])
+
+                    f1 = f1_metric(y_pred=outputs_pred_mask, y=outputs_label_mask)
+                    dice = dice_metric(y_pred=val_outputs, y=val_labels_onehot)
+                    # compute metric for current iteration
+                    # print(
+                    #     os.path.basename(
+                    #         val_data["img_meta_dict"]["filename_or_obj"][0]
+                    #     ),
+                    #     dice_metric(y_pred=val_outputs, y=val_labels_onehot),
+                    # )
+                    val_bar.set_postfix_str(os.path.basename(
+                            val_data["img_meta_dict"]["filename_or_obj"][0]
+                        ) + str(f1) + str(dice))
+
+                f1_metric_ = f1_metric.aggregate()[0].item()
+                dice_metric_ = dice_metric.aggregate().item()
                 # reset the status for next validation round
                 dice_metric.reset()
-                metric_values.append(metric)
-                if metric > best_metric:
-                    best_metric = metric
+                f1_metric.reset()
+                metric_values.append(f1_metric_)
+                if f1_metric_ > best_metric:
+                    best_metric = f1_metric_
                     best_metric_epoch = epoch + 1
-                    torch.save(checkpoint, join(model_path, "best_Dice_model.pth"))
+                    # torch.save(checkpoint, join(model_path, "best_Dice_model.pth"))
+                    torch.save(checkpoint, join(model_path, "best_F1_model.pth"))
                     print("saved new best metric model")
+                # print(
+                #     "current epoch: {} current mean dice: {:.4f} best mean dice: {:.4f} at epoch {}".format(
+                #         epoch + 1, dice_metric, best_metric, best_metric_epoch
+                #     )
+                # )
                 print(
-                    "current epoch: {} current mean dice: {:.4f} best mean dice: {:.4f} at epoch {}".format(
-                        epoch + 1, metric, best_metric, best_metric_epoch
+                    "current epoch: {} current mean f1 score: {:.4f} best mean f1 score: {:.4f} at epoch {}".format(
+                        epoch + 1, f1_metric_, best_metric, best_metric_epoch
                     )
                 )
-                writer.add_scalar("val_mean_dice", metric, epoch + 1)
+                writer.add_scalars("val_metrics", {"f1": f1_metric_, "dice": dice_metric_}, epoch + 1)
                 # plot the last model output as GIF image in TensorBoard with the corresponding image and label
                 plot_2d_or_3d_image(val_images, epoch, writer, index=0, tag="image")
                 plot_2d_or_3d_image(val_labels, epoch, writer, index=0, tag="label")

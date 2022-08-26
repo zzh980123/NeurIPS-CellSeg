@@ -1,1 +1,3 @@
-cd .. && pwd && python ./data/pre_process_3class.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Labeled
+#cd .. && pwd && python ./data/pre_process_3class.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Labeled
+#cd .. && pwd && python ./data/pre_process_unlabeled.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Unlabeled/release-part1 -o ./data/Train_Pre_Unlabeled
+cd .. && pwd && python ./data/pre_process_cellsize.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Labeled
