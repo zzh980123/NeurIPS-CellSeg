@@ -2,12 +2,11 @@ import tifffile as tif
 import imageio
 import numpy as np
 
-# path = '/media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Labeled/labels/cell_00143_label.tiff'
+path = '../../data/Train_Pre_3class/labels/cell_00038_label.png'
+path_src = '../../data/Train_Pre_3class/images/cell_00038.png'
+
 
 def view_label_3class(path, path_src):
-    path = '../../data/Train_Pre_3class/labels/cell_00038_label.png'
-    path_src = '../../data/Train_Pre_3class/images/cell_00038.png'
-    # label = tif.imread(path)
     label = imageio.imread_v2(path)
     src = imageio.imread_v2(path_src)
     print(label)
@@ -40,7 +39,6 @@ def view_label_3class(path, path_src):
 
 
 def view_label_sdf(path):
-    path = 'cell_00001_label.png'
     label = imageio.imread_v2(path)
     print(np.unique(label))
     outline_ = label <= 127

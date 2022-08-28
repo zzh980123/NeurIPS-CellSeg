@@ -7,6 +7,8 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
+import tqdm
+
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 from monai.transforms import RandAffined
@@ -267,7 +269,9 @@ def main():
     for epoch in range(restart_epoch, max_epochs):
         model.train()
         epoch_loss = 0
-        for step, batch_data in enumerate(train_loader, 1):
+        train_bar = tqdm.tqdm(enumerate(train_loader, 1), total=len(train_loader))
+
+        for step, batch_data in train_bar:
             inputs, labels = batch_data["img"].to(device), batch_data["label"].to(
                 device
             )
@@ -286,7 +290,9 @@ def main():
             optimizer.step()
             epoch_loss += loss.item()
             epoch_len = len(train_ds) // train_loader.batch_size
-            print(f"{step - 1}/{epoch_len}, train_loss: {loss.item():.4f}")
+            # print(f"{step - 1}/{epoch_len}, train_loss: {loss.item():.4f}")
+            train_bar.set_postfix_str(f"train_loss: {loss.item():.4f}")
+
             writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)
         epoch_loss /= step
         epoch_loss_values.append(epoch_loss)

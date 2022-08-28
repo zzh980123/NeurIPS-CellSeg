@@ -665,10 +665,11 @@ def post_process(label, max_size=60 * 60):
 
     if avg_size >= max_size:
         label[label > 0] = 1
-        # label = ~binary_dilation(~label, iterations=2)
-        iter_ = max(int(avg_size ** .5) // 8, 1)
+        back_label = 1 - label
+        iter_ = max(int(avg_size ** .5) // 16, 5)
+        label = ~binary_dilation(back_label, iterations=iter_)
         label = binary_erosion(label, iterations=iter_)
         label = measure.label(morphology.remove_small_holes(label, area_threshold=16), background=0)
-        label = grey_dilation(label, size=(iter_ * 2, iter_ * 2))
+        label = grey_dilation(label, size=(iter_ * 4, iter_ * 4))
 
     return label

@@ -1,5 +1,6 @@
 from models.daformer import *
 from models.coat import *
+from models.daformer_3x3x3 import daformer_conv3x3x3
 
 
 def criterion_aux_loss(logit, mask):
@@ -22,16 +23,16 @@ class RGB(nn.Module):
         return (x - self.mean) / self.std
 
 
-class DaFormaerCoATNet(nn.Module):
+class DaFormaerCoATNet_v2(nn.Module):
 
     def __init__(self,
                  in_channel=3,
                  out_channel=3,
                  encoder=coat_lite_medium,
                  encoder_pretrain='coat_lite_medium_384x384_f9129688.pth',
-                 decoder=daformer_conv3x3,
+                 decoder=daformer_conv3x3x3,
                  decoder_dim=320):
-        super(DaFormaerCoATNet, self).__init__()
+        super(DaFormaerCoATNet_v2, self).__init__()
 
         self.rgb = RGB()
 
@@ -47,14 +48,14 @@ class DaFormaerCoATNet(nn.Module):
             nn.Conv2d(decoder_dim, out_channel, kernel_size=1),
         )
 
+        self.upsample = MixUpSample(scale_factor=4)
+
         # try to load the pretrained model of CoAT
         if encoder_pretrain is not None:
             checkpoint = torch.load(encoder_pretrain, map_location=lambda storage, loc: storage)
             self.encoder.load_state_dict(checkpoint['model'], strict=False)
 
-
     def forward(self, x):
-
         x = self.rgb(x)
         encode_info = self.encoder(x)
 
@@ -62,7 +63,6 @@ class DaFormaerCoATNet(nn.Module):
 
         logit = self.logit(last)
 
-        upsample_logit = F.interpolate(logit, size=None, scale_factor=4, mode='bilinear', align_corners=False)
+        upsample_logit = self.upsample(logit)
 
         return upsample_logit
-

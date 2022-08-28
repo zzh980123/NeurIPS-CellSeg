@@ -20,9 +20,10 @@
 #python predict.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/swinunetr_dfc_v5/tiny2/outputs/ --model_path ./work_dir/swinunetr_dfc_v5/swinunetr_dfc_v5_3class --model_name swinunetr_dfc_v5 --show_overlay
 #python predict.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/swinunetr_dfc_v4_fined/small/outputs/ --model_path ./work_dir/swinunetr_dfc_v4_fined/swinunetr_dfc_v4_emb48_2262_3class_fined --model_name swinunetr_dfc_v4_emb48_2262 --show_overlay
 #python predict.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/swinunetr_dfc_v5_fined/tiny2/outputs/ --model_path ./work_dir/swinunetr_dfc_v5/swinunetr_dfc_v5_3class_fined --model_name swinunetr_dfc_v5 --show_overlay
-python predict.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/coat_daformer_3class_s512_amp_3class/outputs_s768/ --model_path ./work_dir/coat_daformer_3class_s512_amp/coat_daformer_net_3class --model_name coat_daformer_net --show_overlay --input_size 640
+#python predict.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/coat_daformer_3class_s512_amp_3class/outputs_s640/ --model_path ./work_dir/coat_daformer_3class_s512_amp/coat_daformer_net_3class --model_name coat_daformer_net --show_overlay --input_size 640
+python predict.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/coat_daformer_3class_s512_amp_3class/outputs_s768_fined/ --model_path ./work_dir/coat_daformer_3class_s512_fined/coat_daformer_net_3class_fined --model_name coat_daformer_net --show_overlay --input_size 768
 
 
-############################### sdf predict #######################################
+############################### sdf predict ######################################
 
 #python predict_sdf_ls.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/swinunetr_sdf/outputs/ --model_path ./work_dir/swinunetr_sdf/swinunetr_sdf --model_name swinunetr --show_overlay

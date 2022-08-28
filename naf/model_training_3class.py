@@ -8,7 +8,7 @@ import argparse
 import os
 import tqdm
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
 from skimage import measure, morphology
 
@@ -319,13 +319,6 @@ def main():
 
                     f1 = f1_metric(y_pred=outputs_pred_mask, y=outputs_label_mask)
                     dice = dice_metric(y_pred=val_outputs, y=val_labels_onehot)
-
-                    # compute metric for current iteration
-                    # print(
-                    #     os.path.basename(
-                    #         val_data["img_meta_dict"]["filename_or_obj"][0]
-                    #     ), f1, dice
-                    # )
 
                     val_bar.set_postfix_str(os.path.basename(
                             val_data["img_meta_dict"]["filename_or_obj"][0]

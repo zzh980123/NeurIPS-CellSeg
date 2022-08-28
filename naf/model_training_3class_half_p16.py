@@ -6,7 +6,7 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 
 import argparse
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
 import tqdm
 from skimage import measure, morphology
@@ -229,7 +229,6 @@ def main():
     model = model_factory(args.model_name.lower(), device, args, in_channels=3)
 
     loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
-    # loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.25, 0.25, 0.5]).to(device))
 
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
@@ -260,9 +259,6 @@ def main():
                 labels_onehot = monai.networks.one_hot(
                     labels, args.num_class
                 )  # (b,cls,256,256)
-
-                # smooth edge
-                # labels_onehot[:, 2, ...] = smooth_transformer(labels_onehot[:, 2, ...])
 
                 loss = loss_function(outputs.float(), labels_onehot.float())
 
@@ -325,12 +321,6 @@ def main():
                     f1 = f1_metric(y_pred=outputs_pred_mask, y=outputs_label_mask)
                     dice = dice_metric(y_pred=val_outputs, y=val_labels_onehot)
                     # compute metric for current iteration
-                    # print(
-                    #     os.path.basename(
-                    #         val_data["img_meta_dict"]["filename_or_obj"][0]
-                    #     ),
-                    #     dice_metric(y_pred=val_outputs, y=val_labels_onehot),
-                    # )
                     val_bar.set_postfix_str(os.path.basename(
                             val_data["img_meta_dict"]["filename_or_obj"][0]
                         ) + str(f1) + str(dice))

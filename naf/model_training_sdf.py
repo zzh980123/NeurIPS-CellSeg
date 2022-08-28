@@ -37,7 +37,7 @@ def main():
 
     # Model parameters
     parser.add_argument(
-        "--model_name", default="swinunetr", help="select mode: unet, unetr, swinunetr， swinunetrv2"
+        "--model_name", default="swinunetr", help="select mode: unet, unetr, swinunetr， swinunetr ..."
     )
     parser.add_argument("--num_class", default=2, type=int, help="segmentation classes")
     parser.add_argument(
@@ -155,7 +155,7 @@ def main():
             ScaleIntensityd(keys=["sdf_label"], allow_missing_keys=True, minv=None, maxv=None, factor=(1 / 255 - 1)),
             RandAxisFlipd(keys=["img", "sdf_label"], prob=0.5),
             RandRotate90d(keys=["img", "sdf_label"], prob=0.5, spatial_axes=[0, 1]),
-            Rand2DElasticd(keys=["img", "sdf_label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
+            # Rand2DElasticd(keys=["img", "sdf_label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),

@@ -26,11 +26,7 @@ window1d = windows.hann(test_img_resize.shape[0])
 window2d = np.sqrt(np.outer(window1d,window1d))
 
 test_img_resize = test_img_resize * window2d
-res: np.ndarray = np.fft.fft2(test_img_resize, axes=(0,1))
-# res_real = np.real(res)
-# res_complex = res.imag
-#res_real[0,0] = res_real[0,0] /2
-#res_real = res_real / (res_real.size()/2)
+res: np.ndarray = np.fft.fft2(test_img_resize, axes=(0, 1))
 
 # res_real_center = np.log(1+np.abs(fftshift(res_real)))
 shift_ = np.fft.fftshift(res, axes=(0,1))
@@ -41,13 +37,9 @@ size_ = mask.shape[0]
 remove_precent = 0.03
 rm = int(size_ * remove_precent)
 mask[size_ // 2 - rm: size_ // 2+ rm, size_ // 2 - rm: size_ // 2 + rm] = 0
-# mask[size_ // 2 - 2: size_ // 2 + 2, size_ // 2 - 2: size_ // 2 + 2] = 1
 shift_ *= mask
 
-
 res = np.fft.ifftshift(shift_, axes=(0,1))
-# res.real = res_real
-
 
 res = np.fft.ifft2(res, axes=(0,1))
 

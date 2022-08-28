@@ -1,5 +1,5 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
 
 from transformers.utils import post_process
 
@@ -59,10 +59,15 @@ def main():
     model.load_state_dict(checkpoint['model_state_dict'])
     # %%
     roi_size = (args.input_size, args.input_size)
-    sw_batch_size = 4
+    sw_batch_size = 2
     model.eval()
+    torch.set_grad_enabled(False)
+    # print(torch.cuda.memory_summary())
+    # torch.cuda.set_per_process_memory_fraction(0.5, 0)
+
     with torch.no_grad():
-        for img_name in img_names:
+        for img_name in reversed(img_names):
+
             if img_name.endswith('.tif') or img_name.endswith('.tiff'):
                 img_data = tif.imread(join(input_path, img_name))
             else:
@@ -84,8 +89,8 @@ def main():
             t0 = time.time()
             test_npy01 = pre_img_data / np.max(pre_img_data)
             test_tensor = torch.from_numpy(np.expand_dims(test_npy01, 0)).permute(0, 3, 1, 2).type(torch.FloatTensor).to(device)
-            test_pred_out = sliding_window_inference(test_tensor, roi_size, sw_batch_size, model)
-            test_pred_out = torch.nn.functional.softmax(test_pred_out, dim=1)  # (B, C, H, W)
+            test_pred_out = sliding_window_inference(test_tensor, roi_size, sw_batch_size, model, device=torch.device("cpu"), padding_mode="replicate")
+            test_pred_out = torch.softmax(test_pred_out, dim=1)  # (B, C, H, W)
             test_pred_npy = test_pred_out[0, 1].cpu().numpy()
             # convert probability map to binary mask and apply morphological postprocessing
             test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(test_pred_npy > 0.5), 16))

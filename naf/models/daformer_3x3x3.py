@@ -195,6 +195,14 @@ class DaformerDecoder(nn.Module):
                 dilation,
             )
 
+        if fuse == 'conv3x3x3':
+            self.fuse = nn.Sequential(
+                nn.Conv3d(decoder_dim, decoder_dim, (4, 3, 3), padding=(0, 1, 1), stride=(4, 1, 1), bias=False, padding_mode='reflect'),
+                # nn.Conv3d(2, 1, (4, 1, 1), padding=(2, 0, 0), stride=(1, 1, 1), bias=False, padding_mode='reflect'),
+                nn.BatchNorm3d(decoder_dim),
+                nn.ReLU(inplace=True),
+            )
+
         # if fuse == 'dfc_v5':
         #     self.fuse = DeformableConvLayer(
         #         img_size=img_size,
@@ -211,14 +219,27 @@ class DaformerDecoder(nn.Module):
             f = self.mlp[i](f)
             out.append(f)
 
-        x = self.fuse(torch.cat(out, dim=1))
+        ll = len(out)
+
+        combine2d = torch.cat(out, dim=1)
+        B, C, H, W = combine2d.shape
+        assert C % ll == 0
+
+        # shuffle the channels
+        combine2d = combine2d.permute(0, 1, 3, 2).reshape(B, 1, W * C, H).reshape(B, 1 * ll, W * C // ll, H).permute(0, 1, 3, 2) \
+            .reshape(B, 1, H * ll, W * C // ll).permute(0, 1, 3, 2).reshape(B, 1 * C // ll, W, H * ll).permute(0, 1, 3, 2)\
+            .reshape(B, 1, C, H, W).reshape(B, C // ll, ll, H, W)
+
+        #  B, C // ll, ll, H, W -> B, C // ll, 1, H, W
+        x = self.fuse(combine2d) \
+            .reshape(B, C // ll, H, W)  # B, C // ll, H, W
 
         return x, out
 
 
-class daformer_conv3x3(DaformerDecoder):
+class daformer_conv3x3x3(DaformerDecoder):
     def __init__(self, **kwargs):
-        super(daformer_conv3x3, self).__init__(
-            fuse='conv3x3',
+        super(daformer_conv3x3x3, self).__init__(
+            fuse='conv3x3x3',
             **kwargs
         )
