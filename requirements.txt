@@ -13,3 +13,4 @@ einops
 imagecodecs
 imgaug
 taichi
+staintools

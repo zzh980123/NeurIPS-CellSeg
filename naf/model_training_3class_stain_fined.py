@@ -6,17 +6,19 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 
 import argparse
 import os
+
 import tqdm
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
+from monai.transforms import RandAffined
 from skimage import measure, morphology
-
-from transformers.utils import CellF1Metric, StainNormalized
+from transformers.utils import CellF1Metric, StainNormalized, StainNetNormalized
+from losses import sim
 
 
 def main():
-    parser = argparse.ArgumentParser("Microscopy image segmentation")
+    parser = argparse.ArgumentParser("Baseline for Microscopy image segmentation")
     # Dataset parameters
     parser.add_argument(
         "--data_path",
@@ -25,7 +27,7 @@ def main():
         help="training data path; subfolders: images, labels",
     )
     parser.add_argument(
-        "--work_dir", default="debug", help="path where to save models and logs"
+        "--work_dir", default="./naf/work_dir/swinunetr_dfc_v3_fined", help="path where to save models and logs"
     )
     parser.add_argument("--seed", default=2022, type=int)
     # parser.add_argument("--resume", default=False, help="resume from checkpoint")
@@ -33,18 +35,20 @@ def main():
 
     # Model parameters
     parser.add_argument(
-        "--model_name", default="swinunetr", help="select mode: unet, unetr, swinunetr， swinunetr_dfc_v3"
+        "--model_name", default="swinunetr_dfc_v3", help="select mode: unet, unetr, swinunetr， swinunetrv2"
     )
+    parser.add_argument('--model_path', default='./naf/work_dir/coat_daformer_3class_s512_fined/coat_daformer_net_3class_fined', help='path where to save models and segmentation results')
+
     parser.add_argument("--num_class", default=3, type=int, help="segmentation classes")
     parser.add_argument(
         "--input_size", default=256, type=int, help="segmentation classes"
     )
     # Training parameters
     parser.add_argument("--batch_size", default=8, type=int, help="Batch size per GPU")
-    parser.add_argument("--max_epochs", default=2000, type=int)
+    parser.add_argument("--max_epochs", default=3000, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=150, type=int)
-    parser.add_argument("--initial_lr", type=float, default=6e-4, help="learning rate")
+    parser.add_argument("--initial_lr", type=float, default=6e-3, help="learning rate")
 
     args = parser.parse_args()
 
@@ -91,10 +95,12 @@ def main():
     print("Successfully imported all requirements!")
 
     monai.config.print_config()
-
+    stain_net = StainNetNormalized(
+        keys=["img"], allow_missing_keys=True, checkpoint="naf/augment/stain_augment/StainNet/checkpoints/aligned_histopathology_dataset/StainNet-Public_layer3_ch32.pth"
+    )
     # %% set training/validation split
     np.random.seed(args.seed)
-    model_path = join(args.work_dir, args.model_name + "_3class")
+    model_path = join(args.work_dir, args.model_name + "_3class_fined")
     os.makedirs(model_path, exist_ok=True)
     run_id = datetime.now().strftime("%Y%m%d-%H%M")
     shutil.copyfile(
@@ -111,6 +117,7 @@ def main():
     indices = np.arange(img_num)
     np.random.shuffle(indices)
     val_split = int(img_num * val_frac)
+
     train_indices = indices[val_split:]
     val_indices = indices[:val_split]
 
@@ -144,28 +151,31 @@ def main():
             ScaleIntensityd(
                 keys=["img"], allow_missing_keys=True
             ),  # Do not scale label
-
-
+            StainNormalized(
+                keys=["img"], allow_missing_keys=True
+            ),
             SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
             RandSpatialCropd(
                 keys=["img", "label"], roi_size=args.input_size, random_size=False
             ),
+            RandAffined(keys=["img", "label"], prob=0.5, rotate_range=(-3.14, 3.14), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
-            RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
+            # RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
             # Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
-            RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2), sigma_y=(1, 2)),
+            RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2)),
             RandHistogramShiftd(keys=["img"], prob=0.25, num_control_points=3),
             RandZoomd(
                 keys=["img", "label"],
-                prob=1,
-                min_zoom=0.3,
+                prob=0.5,
+                min_zoom=0.4,
                 max_zoom=1.5,
                 mode=["area", "nearest"],
                 padding_mode="constant"
             ),
+            stain_net,
             EnsureTyped(keys=["img", "label"]),
         ]
     )
@@ -186,6 +196,7 @@ def main():
             # AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
             ScaleIntensityd(keys=["img"], allow_missing_keys=True),
             # AsDiscreted(keys=['label'], to_onehot=3),
+            stain_net,
             EnsureTyped(keys=["img", "label"]),
         ]
     )
@@ -229,41 +240,49 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = model_factory(args.model_name.lower(), device, args, in_channels=3)
-    # from augment.stain_augment.StainNet.models import StainNet
-    # stain_model = StainNet()
-    # check_point = "./augment/stain_augment/StainNet/checkpoints/aligned_cytopathology_dataset/StainNet-3x0_best_psnr_layer3_ch32.pth"
-    # stain_model.load_state_dict(torch.load(check_point))
-    # stain_model.eval()
-    # stain_model.requires_grad_(False)
 
-    # loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
-    loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.2, 0.3, 0.5]).to(device))
+    loss_function1 = monai.losses.DiceCELoss(softmax=True).to(device)
+    loss_function2 = sim.LovaszSoftmaxLoss().to(device)
+    # loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.25, 0.25, 0.5]).to(device))
 
     initial_lr = args.initial_lr
+
+    # smooth_transformer = GaussianSmooth(sigma=1)
+    load_model_path = join(args.model_path, 'best_F1_model.pth')
+    if not os.path.exists(load_model_path):
+        load_model_path = join(args.model_path, 'best_Dice_model.pth')
+    # load model parameters
+    checkpoint = torch.load(load_model_path, map_location=torch.device(device))
+    model.load_state_dict(checkpoint['model_state_dict'])
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
-    smooth_transformer = GaussianSmooth(sigma=1)
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    optimizer.param_groups[0]['capturable'] = True
+    restart_epoch = checkpoint['epoch']
+    history_loss = checkpoint['loss']
 
     # start a typical PyTorch training
     max_epochs = args.max_epochs
     epoch_tolerance = args.epoch_tolerance
     val_interval = args.val_interval
     best_metric = -1
-    best_metric_epoch = -1
-    epoch_loss_values = list()
+    best_metric_epoch = restart_epoch
+    epoch_loss_values = history_loss
     metric_values = list()
     torch.autograd.set_detect_anomaly(True)
     writer = SummaryWriter(model_path)
-    for epoch in range(1, max_epochs):
+
+    print(f"restart from {restart_epoch} epoch...")
+
+    for epoch in range(restart_epoch, max_epochs):
         model.train()
         epoch_loss = 0
         train_bar = tqdm.tqdm(enumerate(train_loader, 1), total=len(train_loader))
+
         for step, batch_data in train_bar:
             inputs, labels = batch_data["img"].to(device), batch_data["label"].to(
                 device
             )
             optimizer.zero_grad()
-            # inputs = stain_model(inputs).to(device)
-
             outputs = model(inputs)
             labels_onehot = monai.networks.one_hot(
                 labels, args.num_class
@@ -272,15 +291,16 @@ def main():
             # smooth edge
             # labels_onehot[:, 2, ...] = smooth_transformer(labels_onehot[:, 2, ...])
 
-            loss = loss_function(outputs, labels_onehot)
+            loss = 0.8 * loss_function1(outputs, labels_onehot) + \
+                   0.2 * loss_function2(torch.softmax(outputs, dim=1), labels)
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
             epoch_len = len(train_ds) // train_loader.batch_size
-
+            # print(f"{step - 1}/{epoch_len}, train_loss: {loss.item():.4f}")
             train_bar.set_postfix_str(f"train_loss: {loss.item():.4f}")
-            writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)
 
+            writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)
         epoch_loss /= step
         epoch_loss_values.append(epoch_loss)
         print(f"epoch {epoch} average loss: {epoch_loss:.4f}")
@@ -291,23 +311,21 @@ def main():
             "loss": epoch_loss_values,
         }
 
-        if epoch > 20 and epoch % val_interval == 0:
+        if 'debug' in args.work_dir or (epoch > 20 and epoch % val_interval == 0):
             model.eval()
             with torch.no_grad():
                 val_images = None
                 val_labels = None
                 val_outputs = None
-
-                for step, val_data in enumerate(val_loader, 1):
-                    val_images, val_labels = val_data["img"].to(device), val_data["label"].to(device)
-                    # val_images = stain_model(val_images).to(device)
-
+                for val_data in val_loader:
+                    val_images, val_labels = val_data["img"].to(device), val_data[
+                        "label"
+                    ].to(device)
                     val_labels_onehot = monai.networks.one_hot(
                         val_labels, args.num_class
                     )
                     roi_size = (args.input_size, args.input_size)
                     sw_batch_size = args.batch_size
-
                     val_outputs = sliding_window_inference(
                         val_images, roi_size, sw_batch_size, model
                     )
@@ -329,9 +347,12 @@ def main():
                     f1 = f1_metric(y_pred=outputs_pred_mask, y=outputs_label_mask)
                     dice = dice_metric(y_pred=val_outputs, y=val_labels_onehot)
 
-                    print(os.path.basename(
-                        val_data["img_meta_dict"]["filename_or_obj"][0]
-                    ), f1, dice)
+                    # compute metric for current iteration
+                    print(
+                        os.path.basename(
+                            val_data["img_meta_dict"]["filename_or_obj"][0]
+                        ), f1, dice
+                    )
 
                 # aggregate the final mean f1 score and dice result
                 f1_metric_ = f1_metric.aggregate()[0].item()
@@ -356,8 +377,8 @@ def main():
                         epoch + 1, f1_metric_, best_metric, best_metric_epoch
                     )
                 )
+                # writer.add_scalar("val_mean_dice", dice_metric_, epoch + 1)
                 writer.add_scalars("val_metrics", {"f1": f1_metric_, "dice": dice_metric_}, epoch + 1)
-
                 # plot the last model output as GIF image in TensorBoard with the corresponding image and label
                 plot_2d_or_3d_image(val_images, epoch, writer, index=0, tag="image")
                 plot_2d_or_3d_image(val_labels, epoch, writer, index=0, tag="label")

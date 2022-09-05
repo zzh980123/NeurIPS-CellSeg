@@ -1,54 +1,23 @@
+import json
 import random
-import re
-from copy import deepcopy
-from typing import Any, Callable, Dict, Hashable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Dict, Hashable, Mapping, Union
 
 import numpy as np
+import staintools
 import torch
-
-from monai.config import DtypeLike, KeysCollection
+from monai.config import KeysCollection
 from monai.config.type_definitions import NdarrayOrTensor
-from monai.data.utils import no_collation
 from monai.metrics import CumulativeIterationMetric, do_metric_reduction
 from monai.transforms.inverse import InvertibleTransform
-from monai.transforms.transform import MapTransform, Randomizable, RandomizableTransform
+from monai.transforms.transform import MapTransform, RandomizableTransform
 from monai.transforms.utility.array import (
     AddChannel,
-    AddCoordinateChannels,
-    AddExtremePointsChannel,
-    AsChannelFirst,
-    AsChannelLast,
-    CastToType,
-    ClassesToIndices,
-    ConvertToMultiChannelBasedOnBratsClasses,
-    CuCIM,
-    DataStats,
-    EnsureChannelFirst,
-    EnsureType,
-    FgBgToIndices,
-    Identity,
-    IntensityStats,
-    LabelToMask,
-    Lambda,
-    MapLabelValue,
-    RemoveRepeatedChannel,
-    RepeatChannel,
-    SimulateDelay,
-    SplitDim,
-    SqueezeDim,
-    ToCupy,
-    ToDevice,
-    ToNumpy,
-    ToPIL,
-    TorchVision,
-    ToTensor,
-    Transpose,
 )
 from monai.utils import MetricReduction
 from numba import jit
 from scipy.optimize import linear_sum_assignment
 from skimage import segmentation, measure, morphology
-
+import cv2
 
 class ConditionAddChannelFirstd(MapTransform):
     """
@@ -188,6 +157,75 @@ class CenterCropByPercentd(MapTransform):
             start_w = int((W - w) * 0.5)
             d[key] = datas[:, start_h: start_h + h, start_w: start_w + w]
 
+        return d
+
+
+class LoadJson2Tensor(MapTransform):
+
+    def __init__(self, keys: KeysCollection, func, allow_missing_keys: bool = False):
+        super().__init__(keys, allow_missing_keys)
+        self.func = func
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        for key in self.key_iterator(d):
+            # to gray
+            json_path = d[key]
+            assert isinstance(json_path, str)
+
+            with open(json_path, 'r') as f:
+                res = json.load(f)
+                tensor = self.func(res)
+                d[key] = tensor
+
+        return d
+
+
+class StainNetNormalized(MapTransform):
+
+    def __init__(self, keys: KeysCollection, checkpoint="./augment/stain_augment/StainNet/checkpoints/aligned_cytopathology_dataset/StainNet-3x0_best_psnr_layer3_ch32.pth",
+                 device="cpu", allow_missing_keys: bool = False) -> None:
+        """
+        Args:
+            keys: keys of the corresponding items to be transformed.
+                See also: :py:class:`monai.transforms.compose.MapTransform`
+            allow_missing_keys: don't raise exception if key is missing.
+        """
+        super().__init__(keys, allow_missing_keys)
+        from augment.stain_augment.StainNet.models import StainNet
+        stain_model = StainNet().to(device)
+
+        stain_model.load_state_dict(torch.load(checkpoint))
+        stain_model.eval()
+        stain_model.requires_grad_(False)
+        self.normalizer = stain_model
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+
+        for key in self.key_iterator(d):
+            if not isinstance(d[key], torch.Tensor):
+                d[key] = torch.tensor(d[key], dtype=torch.float32)
+            d[key] = self.normalizer(d[key])
+
+        return d
+
+
+class StainNormalized(MapTransform):
+    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False) -> None:
+        """
+        Args:
+            keys: keys of the corresponding items to be transformed.
+                See also: :py:class:`monai.transforms.compose.MapTransform`
+            allow_missing_keys: don't raise exception if key is missing.
+        """
+        super().__init__(keys, allow_missing_keys)
+        self.normalizer = staintools.ReinhardColorNormalizer()
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        for key in self.key_iterator(d):
+            d[key] = self.normalizer.transform(d[key])
 
         return d
 
@@ -251,7 +289,7 @@ class FFTFilterd(MapTransform):
         return d
 
 
-def fft_highpass_filter(rgb_img, hf_mask_percent=0.1):
+def fft_highpass_filter(rgb_img, hf_mask_percent=0.1, fill_value=0):
     mat = np.array([0.2126, 0.7152, 0.0722]).reshape((3,) + (1,) * 2)
     if not isinstance(rgb_img, np.ndarray):
         raise RuntimeError("FFT transform only support numpy array.")
@@ -270,17 +308,113 @@ def fft_highpass_filter(rgb_img, hf_mask_percent=0.1):
     lf = False
     if remove_percent < 0:
         remove_percent = -remove_percent
+        lf = True
 
     size_ = mask.shape[0]
 
     rm = int(size_ * remove_percent)
     mask[size_ // 2 - rm: size_ // 2 + rm, size_ // 2 - rm: size_ // 2 + rm] = 0
     if remove_percent > 0 and not lf:
-        shift_ *= mask
+        shift_ *= mask + (1 - mask) * fill_value
     elif lf:
-        shift_ *= (1 - mask)
+        shift_ *= (1 - mask) + mask * fill_value
     else:
         pass
+
+    res = np.fft.ifftshift(shift_, axes=(0, 1))
+    res = np.fft.ifft2(res, axes=(0, 1))
+
+    return np.abs(res)
+
+
+def fft_mask_mag(rgb_img, hf_mask_percent=0.1):
+    mat = np.array([0.2126, 0.7152, 0.0722]).reshape((3,) + (1,) * 2)
+    if not isinstance(rgb_img, np.ndarray):
+        raise RuntimeError("FFT transform only support numpy array.")
+
+    if rgb_img.shape[0] == 3 and rgb_img.ndim == 3:
+        gray_img = np.sum(rgb_img * mat, keepdims=True, axis=0)
+    else:
+        gray_img = rgb_img
+
+    res = np.fft.fft2(gray_img, axes=(0, 1))
+
+    shift_ = np.fft.fftshift(res, axes=(0, 1))
+
+    phase_spectrum = np.angle(shift_)
+    mag_spectrum = np.abs(shift_)
+
+    # mask = np.ones_like(shift_)
+
+    # remove_percent = hf_mask_percent
+    # lf = False
+    # if remove_percent < 0:
+    #     remove_percent = -remove_percent
+    #     lf = True
+    #
+    # size_ = mask.shape[0]
+    #
+    # rm = int(size_ * remove_percent)
+    # mask[size_ // 2 - rm: size_ // 2 + rm, size_ // 2 - rm: size_ // 2 + rm] = 0
+    # if remove_percent > 0 and not lf:
+    #     shift_ *= mask
+    # elif lf:
+    #     shift_ *= 1 - mask
+    # else:
+    #     pass
+    image_combine = mag_spectrum * np.e ** (1j * phase_spectrum)
+
+    res = np.fft.ifftshift(image_combine, axes=(0, 1))
+    res = np.fft.ifft2(res, axes=(0, 1))
+
+    return np.abs(res)
+
+
+def swap_fft_lowpass_for(rgb_img1, rgb_img2, hf_mask_percent=0.01):
+    mat = np.array([0.2126, 0.7152, 0.0722]).reshape((3,) + (1,) * 2)
+    if not isinstance(rgb_img1, np.ndarray) or not isinstance(rgb_img2, np.ndarray):
+        raise RuntimeError("FFT transform only support numpy array.")
+
+    if rgb_img1.shape[0] == 3 and rgb_img1.ndim == 3:
+        gray_img1 = np.sum(rgb_img1 * mat, keepdims=True, axis=0)
+    else:
+        gray_img1 = rgb_img1
+
+    if rgb_img2.shape[0] == 3 and rgb_img2.ndim == 3:
+        gray_img2 = np.sum(rgb_img2 * mat, keepdims=True, axis=0)
+    else:
+        gray_img2 = rgb_img2
+
+    assert rgb_img1.shape == rgb_img2.shape
+
+    res1 = np.fft.fft2(gray_img1, axes=(0, 1))
+    res2 = np.fft.fft2(gray_img2, axes=(0, 1))
+
+    shift_1 = np.fft.fftshift(res1, axes=(0, 1))
+    shift_2 = np.fft.fftshift(res2, axes=(0, 1))
+    mask = np.ones_like(shift_1)
+
+    remove_percent = hf_mask_percent
+    lf = False
+    if remove_percent < 0:
+        remove_percent = -remove_percent
+
+    size_ = mask.shape[0]
+
+    rm = int(size_ * remove_percent)
+    mask[size_ // 2 - rm: size_ // 2 + rm, size_ // 2 - rm: size_ // 2 + rm] = 0
+    mask2 = 1 - mask
+
+    if remove_percent > 0 and not lf:
+        shift_1 *= mask
+        shift_2 *= mask2
+        shift_ = shift_1 + shift_2
+    elif lf:
+        shift_1 *= mask2
+        shift_2 *= mask
+        shift_ = shift_1 + shift_2
+    else:
+        raise RuntimeError("Remove percent should be 0~1.")
 
     res = np.fft.ifftshift(shift_, axes=(0, 1))
     res = np.fft.ifft2(res, axes=(0, 1))
@@ -614,6 +748,7 @@ def sem2ins_label(outputs, labels_onehot, dim=1):
 
     return outputs_pred_mask, outputs_label_mask
 
+
 # Obtained from cellpose: https://github.com/MouseLand/cellpose/blob/91dd7abce332a30ead85e10e7c244bfa876c9a2d/cellpose/utils.py#L325
 def get_masks_unet(output, cell_threshold=0, boundary_threshold=0):
     """ create masks using cell probability and cell boundary """
@@ -661,7 +796,7 @@ def post_process(label, max_size=60 * 60):
 
     lll = len(sizes[max_id - 10:max_id])
 
-    avg_size = sum(sizes[max_id - 10: max_id]) / lll
+    avg_size = sum(sizes[max_id - 10: max_id]) / max(lll, 1)
 
     if avg_size >= max_size:
         label[label > 0] = 1
@@ -673,3 +808,54 @@ def post_process(label, max_size=60 * 60):
         label = grey_dilation(label, size=(iter_ * 4, iter_ * 4))
 
     return label
+
+
+def three_classes2instance(label):
+    label = label > 0
+    return measure.label(label)
+
+
+def resize_image(img0, Ly=None, Lx=None, rsz=None, interpolation=cv2.INTER_LINEAR, no_channels=False):
+    """ resize image for computing flows / unresize for computing dynamics
+    Parameters
+    -------------
+    img0: ND-array
+        image of size [Y x X x nchan] or [Lz x Y x X x nchan] or [Lz x Y x X]
+    Ly: int, optional
+    Lx: int, optional
+    rsz: float, optional
+        resize coefficient(s) for image; if Ly is None then rsz is used
+    interpolation: cv2 interp method (optional, default cv2.INTER_LINEAR)
+    Returns
+    --------------
+    imgs: ND-array
+        image of size [Ly x Lx x nchan] or [Lz x Ly x Lx x nchan]
+    """
+    if Ly is None and rsz is None:
+        error_message = 'must give size to resize to or factor to use for resizing'
+        transforms_logger.critical(error_message)
+        raise ValueError(error_message)
+
+    if Ly is None:
+        # determine Ly and Lx using rsz
+        if not isinstance(rsz, list) and not isinstance(rsz, np.ndarray):
+            rsz = [rsz, rsz]
+        if no_channels:
+            Ly = int(img0.shape[-2] * rsz[-2])
+            Lx = int(img0.shape[-1] * rsz[-1])
+        else:
+            Ly = int(img0.shape[-3] * rsz[-2])
+            Lx = int(img0.shape[-2] * rsz[-1])
+
+    # no_channels useful for z-stacks, sot he third dimension is not treated as a channel
+    # but if this is called for grayscale images, they first become [Ly,Lx,2] so ndim=3 but
+    if (img0.ndim > 2 and no_channels) or (img0.ndim == 4 and not no_channels):
+        if no_channels:
+            imgs = np.zeros((img0.shape[0], Ly, Lx), np.float32)
+        else:
+            imgs = np.zeros((img0.shape[0], Ly, Lx, img0.shape[-1]), np.float32)
+        for i, img in enumerate(img0):
+            imgs[i] = cv2.resize(img, (Lx, Ly), interpolation=interpolation)
+    else:
+        imgs = cv2.resize(img0, (Lx, Ly), interpolation=interpolation)
+    return imgs

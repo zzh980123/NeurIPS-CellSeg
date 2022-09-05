@@ -52,9 +52,7 @@ class DaFormaerCoATNet(nn.Module):
             checkpoint = torch.load(encoder_pretrain, map_location=lambda storage, loc: storage)
             self.encoder.load_state_dict(checkpoint['model'], strict=False)
 
-
     def forward(self, x):
-
         x = self.rgb(x)
         encode_info = self.encoder(x)
 
@@ -65,4 +63,3 @@ class DaFormaerCoATNet(nn.Module):
         upsample_logit = F.interpolate(logit, size=None, scale_factor=4, mode='bilinear', align_corners=False)
 
         return upsample_logit
-

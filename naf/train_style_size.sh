@@ -1,0 +1,1 @@
+cd .. && pwd && python ./naf/model_training_size_style.py --data_path ./data/Train_Pre_cell_size --work_dir ./naf/work_dir/coat_daformer_net_db --model_name coat_daformer_net_db

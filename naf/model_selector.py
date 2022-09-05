@@ -3,8 +3,10 @@ from monai.networks.nets import SwinUNETR
 
 from models import UNETR2D
 from models.daformer_coat_net import DaFormaerCoATNet
+from models.daformer_coat_net_doubel_branch import DaFormaerCoATNet_db
 
 from models.daformer_coat_net_v2 import DaFormaerCoATNet_v2
+from models.daformer_coat_net_v3 import DaFormaerCoATNet_v3
 from models.swinunetr_dfc_v1 import SwinUNETRV2_DFCv1
 from models.swinunetr_dfc_v2 import SwinUNETR_DFCv2
 from models.swinunetr_dfc_v3 import SwinUNETR_DFCv3
@@ -174,5 +176,16 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
             out_channel=args.num_class,
             encoder_pretrain='/media/kevin/870A38D039F26F71/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'
         ).to(device)
-
+    if model_name == "coat_daformer_net_v3":
+        model = DaFormaerCoATNet_v3(
+            in_channel=in_channels,
+            out_channel=args.num_class,
+            encoder_pretrain='/media/kevin/870A38D039F26F71/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'
+        ).to(device)
+    if model_name == "coat_daformer_net_db":
+        model = DaFormaerCoATNet_db(
+            in_channel=in_channels,
+            out_channel=args.num_class,
+            encoder_pretrain='/media/kevin/870A38D039F26F71/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'
+        ).to(device)
     return model

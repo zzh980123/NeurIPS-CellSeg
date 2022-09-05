@@ -8,11 +8,11 @@ import argparse
 import os
 import tqdm
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 from skimage import measure, morphology
 
-from transformers.utils import CellF1Metric, StainNormalized
+from transformers.utils import CellF1Metric, StainNormalized, StainNetNormalized
 
 
 def main():
@@ -125,6 +125,11 @@ def main():
     print(
         f"training image num: {len(train_files)}, validation image num: {len(val_files)}"
     )
+
+    stain_net = StainNetNormalized(
+        keys=["img"], allow_missing_keys=True, checkpoint="naf/augment/stain_augment/StainNet/checkpoints/aligned_histopathology_dataset/StainNet-Public_layer3_ch32.pth"
+    )
+
     # %% define transforms for image and segmentation
     train_transforms = Compose(
         [
@@ -144,12 +149,11 @@ def main():
             ScaleIntensityd(
                 keys=["img"], allow_missing_keys=True
             ),  # Do not scale label
-
-
             SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
             RandSpatialCropd(
                 keys=["img", "label"], roi_size=args.input_size, random_size=False
             ),
+            stain_net,
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
             RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
             # Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
@@ -185,6 +189,7 @@ def main():
             ),
             # AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
             ScaleIntensityd(keys=["img"], allow_missing_keys=True),
+            stain_net,
             # AsDiscreted(keys=['label'], to_onehot=3),
             EnsureTyped(keys=["img", "label"]),
         ]
@@ -192,7 +197,7 @@ def main():
 
     # % define dataset, data loader
     check_ds = monai.data.Dataset(data=train_files, transform=train_transforms)
-    check_loader = DataLoader(check_ds, batch_size=1, num_workers=4)
+    check_loader = DataLoader(check_ds, batch_size=1, num_workers=1)
     check_data = monai.utils.misc.first(check_loader)
     print(
         "sanity check:",
@@ -237,11 +242,11 @@ def main():
     # stain_model.requires_grad_(False)
 
     # loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
-    loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.2, 0.3, 0.5]).to(device))
+    loss_function = monai.losses.DiceCELoss(softmax=True)
 
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
-    smooth_transformer = GaussianSmooth(sigma=1)
+    # smooth_transformer = GaussianSmooth(sigma=1)
 
     # start a typical PyTorch training
     max_epochs = args.max_epochs
@@ -300,6 +305,7 @@ def main():
 
                 for step, val_data in enumerate(val_loader, 1):
                     val_images, val_labels = val_data["img"].to(device), val_data["label"].to(device)
+
                     # val_images = stain_model(val_images).to(device)
 
                     val_labels_onehot = monai.networks.one_hot(

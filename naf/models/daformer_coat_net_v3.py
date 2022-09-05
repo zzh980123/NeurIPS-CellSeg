@@ -23,16 +23,16 @@ class RGB(nn.Module):
         return (x - self.mean) / self.std
 
 
-class DaFormaerCoATNet_v2(nn.Module):
+class DaFormaerCoATNet_v3(nn.Module):
 
     def __init__(self,
                  in_channel=3,
                  out_channel=3,
                  encoder=coat_lite_medium,
                  encoder_pretrain='coat_lite_medium_384x384_f9129688.pth',
-                 decoder=daformer_conv3x3x3,
+                 decoder=daformer_conv3x3,
                  decoder_dim=320):
-        super(DaFormaerCoATNet_v2, self).__init__()
+        super(DaFormaerCoATNet_v3, self).__init__()
 
         self.rgb = RGB()
 
@@ -48,7 +48,17 @@ class DaFormaerCoATNet_v2(nn.Module):
             nn.Conv2d(decoder_dim, out_channel, kernel_size=1),
         )
 
-        self.upsample = MixUpSample(scale_factor=4)
+        self.upsample1 = MixUpSample(scale_factor=2)
+
+        self.fine = nn.Sequential(
+            nn.Conv2d(out_channel + out_channel, out_channel, kernel_size=1),
+            nn.BatchNorm2d(out_channel),
+            nn.LeakyReLU(inplace=True)
+        )
+
+        self.upsample2 = MixUpSample(scale_factor=2)
+        self.downsample = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.conv=nn.Conv2d(in_channels=in_channel, out_channels=out_channel, kernel_size=3, padding=1)
 
         # try to load the pretrained model of CoAT
         if encoder_pretrain is not None:
@@ -62,9 +72,14 @@ class DaFormaerCoATNet_v2(nn.Module):
 
         last, decode_info = self.decoder(encode_info)
 
+        high_freq_info = self.downsample(x)
+        high_freq_info = self.conv(high_freq_info)
         logit = self.logit(last)
 
-        upsample_logit = self.upsample(logit)
+        upsample_logit = self.upsample1(logit)
 
+        upsample_logit = self.fine(torch.cat([high_freq_info, upsample_logit], dim=1))
+
+        upsample_logit = self.upsample2(upsample_logit)
 
         return upsample_logit

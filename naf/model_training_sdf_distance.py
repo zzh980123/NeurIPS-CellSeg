@@ -6,26 +6,30 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 
 import argparse
 import os
-import tqdm
-
+import random
 os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
-from skimage import measure, morphology
+from scipy.ndimage import binary_dilation
+from skimage.morphology import dilation
 
-from transformers.utils import CellF1Metric, StainNormalized
+import skimage
+from transformers.utils import CellF1Metric, sem2ins_label
+from monai.transforms import NormalizeIntensityd
+
+from losses.sim import MSEGrad2D
 
 
 def main():
-    parser = argparse.ArgumentParser("Microscopy image segmentation")
+    parser = argparse.ArgumentParser("Baseline for Microscopy image segmentation")
     # Dataset parameters
     parser.add_argument(
         "--data_path",
-        default="./data/Train_Pre_3class/",
+        default="./data/Train_Pre_sdf/",
         type=str,
         help="training data path; subfolders: images, labels",
     )
     parser.add_argument(
-        "--work_dir", default="debug", help="path where to save models and logs"
+        "--work_dir", default="./naf/work_dir/sdf", help="path where to save models and logs"
     )
     parser.add_argument("--seed", default=2022, type=int)
     # parser.add_argument("--resume", default=False, help="resume from checkpoint")
@@ -33,9 +37,9 @@ def main():
 
     # Model parameters
     parser.add_argument(
-        "--model_name", default="swinunetr", help="select mode: unet, unetr, swinunetr， swinunetr_dfc_v3"
+        "--model_name", default="swinunetr", help="select mode: unet, unetr, swinunetr， swinunetr ..."
     )
-    parser.add_argument("--num_class", default=3, type=int, help="segmentation classes")
+    parser.add_argument("--num_class", default=2, type=int, help="segmentation classes")
     parser.add_argument(
         "--input_size", default=256, type=int, help="segmentation classes"
     )
@@ -51,7 +55,6 @@ def main():
     from model_selector import model_factory
 
     from transformers.utils import ConditionChannelNumberd
-    from monai.utils import GridSampleMode
 
     join = os.path.join
 
@@ -94,7 +97,7 @@ def main():
 
     # %% set training/validation split
     np.random.seed(args.seed)
-    model_path = join(args.work_dir, args.model_name + "_3class")
+    model_path = join(args.work_dir, args.model_name + "_sdf")
     os.makedirs(model_path, exist_ok=True)
     run_id = datetime.now().strftime("%Y%m%d-%H%M")
     shutil.copyfile(
@@ -115,11 +118,11 @@ def main():
     val_indices = indices[:val_split]
 
     train_files = [
-        {"img": join(img_path, img_names[i]), "label": join(gt_path, gt_names[i])}
+        {"img": join(img_path, img_names[i]), "sdf_label": join(gt_path, gt_names[i])}
         for i in train_indices
     ]
     val_files = [
-        {"img": join(img_path, img_names[i]), "label": join(gt_path, gt_names[i])}
+        {"img": join(img_path, img_names[i]), "sdf_label": join(gt_path, gt_names[i])}
         for i in val_indices
     ]
     print(
@@ -129,9 +132,9 @@ def main():
     train_transforms = Compose(
         [
             LoadImaged(
-                keys=["img", "label"], reader=PILReader, dtype=np.uint8
+                keys=["img", "sdf_label"], reader=PILReader, dtype=np.uint8
             ),  # image three channels (H, W, 3); label: (H, W)
-            AddChanneld(keys=["label"], allow_missing_keys=True),  # label: (1, H, W)
+            AddChanneld(keys=["sdf_label"], allow_missing_keys=True),  # label: (1, H, W)
             # ConditionAddChannelLastd(
             #     keys=["img"], target_dims=2, allow_missing_keys=True
             # ),
@@ -144,36 +147,34 @@ def main():
             ScaleIntensityd(
                 keys=["img"], allow_missing_keys=True
             ),  # Do not scale label
-
-
-            SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
+            SpatialPadd(keys=["img", "sdf_label"], spatial_size=args.input_size),
             RandSpatialCropd(
-                keys=["img", "label"], roi_size=args.input_size, random_size=False
+                keys=["img", "sdf_label"], roi_size=args.input_size, random_size=False
             ),
-            RandAxisFlipd(keys=["img", "label"], prob=0.5),
-            RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
-            # Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
+            ScaleIntensityd(keys=["sdf_label"], allow_missing_keys=True, minv=None, maxv=None, factor=(1 / 255 - 1)),
+            RandAxisFlipd(keys=["img", "sdf_label"], prob=0.5),
+            RandRotate90d(keys=["img", "sdf_label"], prob=0.5, spatial_axes=[0, 1]),
+            # Rand2DElasticd(keys=["img", "sdf_label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
-            RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2), sigma_y=(1, 2)),
+            RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2)),
             RandHistogramShiftd(keys=["img"], prob=0.25, num_control_points=3),
             RandZoomd(
-                keys=["img", "label"],
+                keys=["img", "sdf_label"],
                 prob=1,
-                min_zoom=0.3,
+                min_zoom=0.8,
                 max_zoom=1.5,
                 mode=["area", "nearest"],
-                padding_mode="constant"
             ),
-            EnsureTyped(keys=["img", "label"]),
+            EnsureTyped(keys=["img", "sdf_label"]),
         ]
     )
 
     val_transforms = Compose(
         [
-            LoadImaged(keys=["img", "label"], reader=PILReader, dtype=np.uint8),
-            AddChanneld(keys=["label"], allow_missing_keys=True),
+            LoadImaged(keys=["img", "sdf_label"], reader=PILReader, dtype=np.uint8),
+            AddChanneld(keys=["sdf_label"], allow_missing_keys=True),
             # ConditionAddChannelLastd(
             #     keys=["img"], target_dims=2, allow_missing_keys=True
             # ),
@@ -185,8 +186,8 @@ def main():
             ),
             # AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
             ScaleIntensityd(keys=["img"], allow_missing_keys=True),
-            # AsDiscreted(keys=['label'], to_onehot=3),
-            EnsureTyped(keys=["img", "label"]),
+            ScaleIntensityd(keys=["sdf_label"], allow_missing_keys=True, minv=None, maxv=None, factor=(1 / 255 - 1)),
+            EnsureTyped(keys=["img", "sdf_label"]),
         ]
     )
 
@@ -198,8 +199,8 @@ def main():
         "sanity check:",
         check_data["img"].shape,
         torch.max(check_data["img"]),
-        check_data["label"].shape,
-        torch.max(check_data["label"]),
+        check_data["sdf_label"].shape,
+        torch.max(check_data["sdf_label"]),
     )
 
     # %% create a training data loader
@@ -224,24 +225,20 @@ def main():
     post_pred = Compose(
         [EnsureType(), Activations(softmax=True), AsDiscrete(threshold=0.5)]
     )
-    post_gt = Compose([EnsureType(), AsDiscrete(to_onehot=None)])
+    post_gt = Compose([EnsureType(), AsDiscrete(threshold=0.5)])
     # create UNet, DiceLoss and Adam optimizer
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = model_factory(args.model_name.lower(), device, args, in_channels=3)
-    # from augment.stain_augment.StainNet.models import StainNet
-    # stain_model = StainNet()
-    # check_point = "./augment/stain_augment/StainNet/checkpoints/aligned_cytopathology_dataset/StainNet-3x0_best_psnr_layer3_ch32.pth"
-    # stain_model.load_state_dict(torch.load(check_point))
-    # stain_model.eval()
-    # stain_model.requires_grad_(False)
+    model = model_factory(args.model_name.lower(), device, args, in_channels=4)
 
-    # loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
-    loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.2, 0.3, 0.5]).to(device))
+    # loss_function = monai.losses.DiceFocalLoss(softmax=True).to(device)
+    loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
 
+    # loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.25, 0.25, 0.5]).to(device))
+    # loss_function = monai.losses.GeneralizedDiceLoss()
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
-    smooth_transformer = GaussianSmooth(sigma=1)
+    # smooth_transformer = GaussianSmooth(sigma=1)
 
     # start a typical PyTorch training
     max_epochs = args.max_epochs
@@ -253,34 +250,47 @@ def main():
     metric_values = list()
     torch.autograd.set_detect_anomaly(True)
     writer = SummaryWriter(model_path)
+    max_distance = 3
     for epoch in range(1, max_epochs):
         model.train()
         epoch_loss = 0
-        train_bar = tqdm.tqdm(enumerate(train_loader, 1), total=len(train_loader))
-        for step, batch_data in train_bar:
-            inputs, labels = batch_data["img"].to(device), batch_data["label"].to(
+        for step, batch_data in enumerate(train_loader, 1):
+            inputs, labels = batch_data["img"].to(device), batch_data["sdf_label"].to(
                 device
             )
+            s = random.gauss(2, 2)
+
+            # de = torch.ones_like(inputs[:, 0:1, ...], device=device, dtype=torch.float32) * s
+            # inputs = torch.cat([inputs, de], dim=1)
+
             optimizer.zero_grad()
-            # inputs = stain_model(inputs).to(device)
+            outputs, distance = model(inputs)
 
-            outputs = model(inputs)
+            # labels[:, 2] = 1  # move the edge mask flag to inside mask flag
+            # labels_onehot = monai.networks.one_hot(
+            #     labels, args.num_class - 1
+            # )  # (b,cls,256,256)
+
+            in_out_label = labels.clone()
+
+            out_bool = in_out_label > 0.5 - distance * max_distance / 255
+
+            in_bool = torch.logical_not(out_bool)
+            in_out_label[out_bool] = 0
+            in_out_label[in_bool] = 1
+
+            # print(in_out_label.max(),in_out_label.min())
             labels_onehot = monai.networks.one_hot(
-                labels, args.num_class
+                in_out_label, 2
             )  # (b,cls,256,256)
-
-            # smooth edge
-            # labels_onehot[:, 2, ...] = smooth_transformer(labels_onehot[:, 2, ...])
 
             loss = loss_function(outputs, labels_onehot)
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
             epoch_len = len(train_ds) // train_loader.batch_size
-
-            train_bar.set_postfix_str(f"train_loss: {loss.item():.4f}")
+            print(f"{step - 1}/{epoch_len}, train_loss: {loss.item():.4f}")
             writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)
-
         epoch_loss /= step
         epoch_loss_values.append(epoch_loss)
         print(f"epoch {epoch} average loss: {epoch_loss:.4f}")
@@ -291,51 +301,70 @@ def main():
             "loss": epoch_loss_values,
         }
 
-        if epoch > 20 and epoch % val_interval == 0:
+        if epoch > 0 and epoch % val_interval == 0:
             model.eval()
             with torch.no_grad():
                 val_images = None
                 val_labels = None
                 val_outputs = None
+                in_out_label = None
+                display_image = None
+                display_label = None
+                display_output = None
+                display_inout_label = None
+                for val_data in val_loader:
+                    val_images, val_labels = val_data["img"].to(device), val_data[
+                        "sdf_label"
+                    ].to(device)
 
-                for step, val_data in enumerate(val_loader, 1):
-                    val_images, val_labels = val_data["img"].to(device), val_data["label"].to(device)
-                    # val_images = stain_model(val_images).to(device)
-
-                    val_labels_onehot = monai.networks.one_hot(
-                        val_labels, args.num_class
-                    )
                     roi_size = (args.input_size, args.input_size)
                     sw_batch_size = args.batch_size
-
-                    val_outputs = sliding_window_inference(
+                    val_outputs, distance = sliding_window_inference(
                         val_images, roi_size, sw_batch_size, model
                     )
-                    val_outputs = [post_pred(i) for i in decollate_batch(val_outputs)]
-                    val_labels_onehot = [
-                        post_gt(i) for i in decollate_batch(val_labels_onehot)
+
+                    # sdf channel
+                    # inside and outside
+                    in_out_output = val_outputs
+
+                    in_out_label = val_labels.clone()
+
+                    out_bool = in_out_label > 0.5 - distance * max_distance / 255
+                    in_bool = torch.logical_not(out_bool)
+                    in_out_label[out_bool] = 0
+                    in_out_label[in_bool] = 1
+                    in_out_label = monai.networks.one_hot(
+                        in_out_label, args.num_class
+                    )
+                    val_outputs_post = [post_pred(i) for i in decollate_batch(in_out_output)]
+                    val_labels_post = [
+                        post_gt(i) for i in decollate_batch(in_out_label)
                     ]
 
-                    outputs_pred_npy = val_outputs[0][1].cpu().numpy()
-                    outputs_label_npy = val_labels_onehot[0][1].cpu().numpy()
-                    # convert probability map to binary mask and apply morphological postprocessing
-                    outputs_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(outputs_pred_npy > 0.5), 16))
-                    outputs_label_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(outputs_label_npy > 0.5), 16))
+                    val_outputs_, val_labels_ = sem2ins_label(val_outputs_post, val_labels_post)
 
-                    # convert back to tensor for metric computing
-                    outputs_pred_mask = torch.from_numpy(outputs_pred_mask[None, None])
-                    outputs_label_mask = torch.from_numpy(outputs_label_mask[None, None])
-
-                    f1 = f1_metric(y_pred=outputs_pred_mask, y=outputs_label_mask)
-                    dice = dice_metric(y_pred=val_outputs, y=val_labels_onehot)
-
-                    print(os.path.basename(
+                    val_outputs_ = torch.from_numpy(dilation(val_outputs_.numpy()))
+                    f1_metric_ = f1_metric(y_pred=val_outputs_, y=val_labels_)
+                    dice_metric_ = dice_metric(y_pred=val_outputs_post, y=val_labels_post)
+                    val_outputs = val_outputs_post[0]
+                    display_inout_label = in_out_label
+                    pic_name = os.path.basename(
                         val_data["img_meta_dict"]["filename_or_obj"][0]
-                    ), f1, dice)
+                    )
+                    # if '115' in pic_name:
+                    display_image = val_images
+                    display_label = val_labels
+                    display_output = val_outputs
 
-                # aggregate the final mean f1 score and dice result
-                f1_metric_ = f1_metric.aggregate()[0].item()
+                    # compute metric for current iteration
+                    print(
+                        pic_name, dice_metric_, f1_metric_
+
+                    )
+
+                # aggregate the final mean dice result
                 dice_metric_ = dice_metric.aggregate().item()
+                f1_metric_ = f1_metric.aggregate()[0].item()
                 # reset the status for next validation round
                 dice_metric.reset()
                 f1_metric.reset()
@@ -348,20 +377,20 @@ def main():
                     print("saved new best metric model")
                 # print(
                 #     "current epoch: {} current mean dice: {:.4f} best mean dice: {:.4f} at epoch {}".format(
-                #         epoch + 1, dice_metric, best_metric, best_metric_epoch
+                #         epoch + 1, f1_metric_, best_metric, best_metric_epoch
                 #     )
                 # )
                 print(
-                    "current epoch: {} current mean f1 score: {:.4f} best mean f1 score: {:.4f} at epoch {}".format(
+                    "current epoch: {} current f1 score: {:.4f} best f1 score: {:.4f} at epoch {}".format(
                         epoch + 1, f1_metric_, best_metric, best_metric_epoch
                     )
                 )
-                writer.add_scalars("val_metrics", {"f1": f1_metric_, "dice": dice_metric_}, epoch + 1)
-
+                writer.add_scalars("val_metrics", {"mean_dice": dice_metric_, "f1_score": f1_metric_}, epoch + 1)
                 # plot the last model output as GIF image in TensorBoard with the corresponding image and label
-                plot_2d_or_3d_image(val_images, epoch, writer, index=0, tag="image")
-                plot_2d_or_3d_image(val_labels, epoch, writer, index=0, tag="label")
-                plot_2d_or_3d_image(val_outputs, epoch, writer, index=0, tag="output", max_channels=3)
+                plot_2d_or_3d_image(display_image, epoch, writer, index=0, tag="image", max_channels=3)
+                plot_2d_or_3d_image(display_label, epoch, writer, index=0, tag="sdf_label")
+                plot_2d_or_3d_image(display_inout_label, epoch, writer, index=0, tag="label")
+                plot_2d_or_3d_image(display_output, epoch, writer, index=0, tag="output")
             if (epoch - best_metric_epoch) > epoch_tolerance:
                 print(
                     f"validation metric does not improve for {epoch_tolerance} epochs! current {epoch=}, {best_metric_epoch=}"

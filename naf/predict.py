@@ -1,5 +1,5 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
 from transformers.utils import post_process
 
@@ -66,7 +66,8 @@ def main():
     # torch.cuda.set_per_process_memory_fraction(0.5, 0)
 
     with torch.no_grad():
-        for img_name in reversed(img_names):
+        for img_name in img_names:
+            torch.cuda.empty_cache()
 
             if img_name.endswith('.tif') or img_name.endswith('.tiff'):
                 img_data = tif.imread(join(input_path, img_name))
