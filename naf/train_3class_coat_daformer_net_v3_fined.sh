@@ -1,0 +1,1 @@
+cd .. && pwd && python ./naf/model_training_3class_fined.py --data_path ./data/Train_Pre_3class_aug1 --work_dir ./naf/work_dir/coat_daformer_v3_3class_s512 --model_path ./naf/work_dir/coat_daformer_v3_3class_s512_amp/coat_daformer_net_v3_3class --model_name coat_daformer_net_v3 --input_size=512 --batch_size 4 --initial_lr 4e-5

@@ -334,6 +334,16 @@ class StableBCELoss(torch.nn.modules.Module):
         return loss.mean()
 
 
+class DirectionLoss(torch.nn.modules.Module):
+    def __init__(self):
+        super(DirectionLoss, self).__init__()
+
+    def forward(self, input, target):
+        direction_score = torch.sum(input * target, dim=1, keepdim=True)
+
+        return torch.mean(torch.square(direction_score - torch.sqrt(torch.sum(input ** 2, dim=1))))
+
+
 def binary_xloss(logits, labels, ignore=None):
     """
     Binary Cross entropy loss
@@ -448,3 +458,13 @@ def mean(l, ignore_nan=False, empty=0):
     if n == 1:
         return acc
     return acc / n
+
+
+if __name__ == '__main__':
+    dl = DirectionLoss()
+    a = torch.tensor([[1, 2], [4, 3]])
+    b = torch.tensor([[1, 2], [2, 3]])
+
+    s = dl.forward(a, b)
+
+    print(s)

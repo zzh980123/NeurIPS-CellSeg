@@ -1,0 +1,1 @@
+cd .. && pwd && python ./naf/model_training_grad.py --data_path ./data/Train_Pre_grad_aug1 --work_dir ./naf/work_dir/coat_daformer_grad_s512 --batch_size 2

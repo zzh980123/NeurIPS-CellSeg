@@ -36,8 +36,8 @@ class DaFormaerCoATNet_GRAD(nn.Module):
         assert out_channel > 3
         # channel0: in prob
         # channel1: out prob
-        # channel2: grad x
-        # channel3: grad y
+        # channel2: grad y
+        # channel3: grad x
 
         self.rgb = RGB()
 
@@ -73,4 +73,4 @@ class DaFormaerCoATNet_GRAD(nn.Module):
         upsample_logit = F.interpolate(logit, size=None, scale_factor=4, mode='bilinear', align_corners=False)
         grads = F.interpolate(grads, size=None, scale_factor=4, mode='bilinear', align_corners=False)
 
-        return upsample_logit, grads
+        return torch.cat([upsample_logit, grads], dim=1)

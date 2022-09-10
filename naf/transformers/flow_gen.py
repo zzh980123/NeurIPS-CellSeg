@@ -159,14 +159,16 @@ def masks_to_flows_gpu(masks, device=None):
     mu_c = np.zeros_like(mu0)
     return mu0, mu_c
 
+
 def diameters(masks):
     _, counts = np.unique(np.int32(masks), return_counts=True)
     counts = counts[1:]
-    md = np.median(counts**0.5)
+    md = np.median(counts ** 0.5)
     if np.isnan(md):
         md = 0
-    md /= (np.pi**0.5)/2
-    return md, counts**0.5
+    md /= (np.pi ** 0.5) / 2
+    return md, counts ** 0.5
+
 
 def masks_to_flows_cpu(masks, device=None):
     """ convert masks to flows using diffusion from center pixel
@@ -312,7 +314,7 @@ def labels_to_flows(labels, files=None, use_gpu=False, device=None, redo_flows=F
         if files is not None:
             for flow, file in zip(flows, files):
                 file_name = os.path.splitext(file)[0]
-                tifffile.imwrite(file_name + '_flows.tif', flow)
+                tifffile.imwrite(file_name + '_flows.tif', flow.transpose(0, 2, 1))
     else:
         print('flows precomputed')
         flows = [labels[n].astype(np.float32) for n in range(nimg)]
@@ -516,7 +518,8 @@ def follow_flows(dP, mask=None, niter=200, interp=True, use_gpu=True, device=Non
             p[:, inds[:, 0], inds[:, 1]] = p_interp
     return p, inds
 
-from scipy.ndimage import convolve, mean, maximum_filter1d
+
+from scipy.ndimage import convolve, mean, maximum_filter1d, binary_fill_holes, find_objects
 
 
 def flow_error(maski, dP_net, use_gpu=False, device=None):
@@ -556,6 +559,7 @@ def flow_error(maski, dP_net, use_gpu=False, device=None):
                             index=np.arange(1, maski.max() + 1))
 
     return flow_errors, dP_masks
+
 
 def remove_bad_flow_masks(masks, flows, threshold=0.4, use_gpu=False, device=None):
     """ remove masks which have inconsistent flows
@@ -698,6 +702,50 @@ def get_masks(p, iscell=None, rpad=20):
     return M0
 
 
+def fill_holes_and_remove_small_masks(masks, min_size=15):
+    """ fill holes in masks (2D/3D) and discard masks smaller than min_size (2D)
+
+    fill holes in each mask using scipy.ndimage.morphology.binary_fill_holes
+    (might have issues at borders between cells, todo: check and fix)
+
+    Parameters
+    ----------------
+    masks: int, 2D or 3D array
+        labelled masks, 0=NO masks; 1,2,...=mask labels,
+        size [Ly x Lx] or [Lz x Ly x Lx]
+    min_size: int (optional, default 15)
+        minimum number of pixels per mask, can turn off with -1
+    Returns
+    ---------------
+    masks: int, 2D or 3D array
+        masks with holes filled and masks smaller than min_size removed,
+        0=NO masks; 1,2,...=mask labels,
+        size [Ly x Lx] or [Lz x Ly x Lx]
+
+    """
+
+    if masks.ndim > 3 or masks.ndim < 2:
+        raise ValueError('masks_to_outlines takes 2D or 3D array, not %dD array' % masks.ndim)
+
+    slices = find_objects(masks)
+    j = 0
+    for i, slc in enumerate(slices):
+        if slc is not None:
+            msk = masks[slc] == (i + 1)
+            npix = msk.sum()
+            if min_size > 0 and npix < min_size:
+                masks[slc][msk] = 0
+            elif npix > 0:
+                if msk.ndim == 3:
+                    for k in range(msk.shape[0]):
+                        msk[k] = binary_fill_holes(msk[k])
+                else:
+                    msk = binary_fill_holes(msk)
+                masks[slc][msk] = (j + 1)
+                j += 1
+    return masks
+
+
 def compute_masks(dP, cellprob, p=None, niter=200,
                   cellprob_threshold=0.0,
                   flow_threshold=0.4, interp=True, do_3D=False,
@@ -755,9 +803,10 @@ def compute_masks(dP, cellprob, p=None, niter=200,
     # moving the cleanup to the end helps avoid some bugs arising from scaling...
     # maybe better would be to rescale the min_size and hole_size parameters to do the
     # cleanup at the prediction scale, or switch depending on which one is bigger...
-    mask = remove_small_holes(mask, min_size=min_size)
+
+    mask = fill_holes_and_remove_small_masks(mask, min_size=min_size)
 
     if mask.dtype == np.uint32:
         print('more than 65535 masks in image, masks returned as np.uint32')
 
-    return mask
+    return mask, p

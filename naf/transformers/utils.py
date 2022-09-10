@@ -1,23 +1,31 @@
 import json
+import math
 import random
-from typing import Dict, Hashable, Mapping, Union
+from os import PathLike
+from typing import Dict, Hashable, Mapping, Union, Tuple, Sequence, Any, List, Optional
 
 import numpy as np
 import staintools
+import tifffile
 import torch
+from matplotlib.colors import Normalize
 from monai.config import KeysCollection
 from monai.config.type_definitions import NdarrayOrTensor
+from monai.data import ImageReader, is_supported_format
+from monai.data.image_reader import _copy_compatible_dict, _stack_images
 from monai.metrics import CumulativeIterationMetric, do_metric_reduction
 from monai.transforms.inverse import InvertibleTransform
 from monai.transforms.transform import MapTransform, RandomizableTransform
 from monai.transforms.utility.array import (
     AddChannel,
 )
-from monai.utils import MetricReduction
+from monai.utils import MetricReduction, ensure_tuple
 from numba import jit
 from scipy.optimize import linear_sum_assignment
 from skimage import segmentation, measure, morphology
 import cv2
+import matplotlib.cm as cm
+
 
 class ConditionAddChannelFirstd(MapTransform):
     """
@@ -181,6 +189,206 @@ class LoadJson2Tensor(MapTransform):
         return d
 
 
+class TiffReader2(ImageReader):
+
+    def __init__(self, channel_dim: Optional[int] = None, **kwargs):
+        super().__init__()
+        self.channel_dim = channel_dim
+        self.kwargs = kwargs
+
+    def verify_suffix(self, filename: Union[Sequence[PathLike], PathLike]) -> bool:
+        """
+        Verify whether the specified `filename` is supported by the current reader.
+        This method should return True if the reader is able to read the format suggested by the
+        `filename`.
+
+        Args:
+            filename: file name or a list of file names to read.
+                if a list of files, verify all the suffixes.
+
+        """
+        raise is_supported_format(filename, ["tif", "tiff"])
+
+    def read(self, data: Union[Sequence[PathLike], PathLike], **kwargs) -> Union[Sequence[Any], Any]:
+        """
+        Read image data from specified file or files.
+        Note that it returns a data object or a sequence of data objects.
+
+        Args:
+            data: file name or a list of file names to read.
+            kwargs: additional args for actual `read` API of 3rd party libs.
+
+        """
+        img_: List[np.ndarray] = []
+
+        filenames: Sequence[PathLike] = ensure_tuple(data)
+        kwargs_ = self.kwargs.copy()
+        kwargs_.update(kwargs)
+        for name in filenames:
+            # we transpose the width dimension and height dimension...
+            # if the label has vector-field, it is needed to fix the direction of the flows
+            img = tifffile.imread(name, **kwargs_).transpose(0, 2, 1)
+            img_.append(img)
+
+        return img_ if len(img_) > 1 else img_[0]
+
+    def get_data(self, img) -> Tuple[np.ndarray, Dict]:
+        """
+        Extract data array and metadata from loaded image and return them.
+        This function must return two objects, the first is a numpy array of image data,
+        the second is a dictionary of metadata.
+
+        Args:
+            img: an image object loaded from an image file or a list of image objects.
+
+        """
+        img_array: List[np.ndarray] = []
+        compatible_meta: Dict = {}
+        if isinstance(img, np.ndarray):
+            img = (img,)
+
+        for i in ensure_tuple(img):
+            header = {}
+            if isinstance(i, np.ndarray):
+                # if `channel_dim` is None, can not detect the channel dim, use all the dims as spatial_shape
+                spatial_shape = np.asarray(i.shape)
+                if isinstance(self.channel_dim, int):
+                    spatial_shape = np.delete(spatial_shape, self.channel_dim)
+                header["spatial_shape"] = spatial_shape
+                # header["width"] = spatial_shape[0]
+                # header["height"] = spatial_shape[1]
+
+            img_array.append(i)
+            header["original_channel_dim"] = self.channel_dim if isinstance(self.channel_dim, int) else "no_channel"
+            _copy_compatible_dict(header, compatible_meta)
+        return _stack_images(img_array, compatible_meta), compatible_meta
+
+
+class Flow2dTransposeFixd(MapTransform):
+
+    def __init__(self, keys: KeysCollection, flow_dim_start=0, flow_dim_end=2, allow_missing_keys: bool = False):
+        """
+        The flow may embed into the Channel-Dimension we defined the C at the last dimension of the tensor.
+        Users should tell witch the flow start and end.
+        For example, the label's dims are: (H, W, C), and the flow is in the channel dimension start at 2 and end at 3:
+
+        flow = input[:, :, 2:4]
+
+        The TiffReader2 will cause the H and W be swapped and the flow's direction being shuffled.
+        This function will recover the direction of flow by rotation and flip.
+
+        @rtype: Fixed flows.
+        """
+        super().__init__(keys, allow_missing_keys)
+        self.flow_slice = slice(flow_dim_start, flow_dim_end)
+        theta = math.pi / 2 * 3
+        self.rotate_matrix = np.array([
+            [math.cos(theta), -math.sin(theta)],
+            [math.sin(theta), math.cos(theta)],
+        ])
+
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+
+        for key in self.key_iterator(d):
+            flow_ = d[key][self.flow_slice]
+            # flip y axis
+            flow_[:1] *= -1
+            C, H, W = flow_.shape
+            # rotate vector in the field
+            flow_ = self.rotate_matrix @ flow_.reshape(C, H * W)
+            d[key][self.flow_slice] = flow_.reshape(C, H, W)
+
+        return d
+
+
+class Flow2dRoatation90Fixd(MapTransform):
+
+    def __init__(self, keys: KeysCollection, flow_dim_start=0, flow_dim_end=2, allow_missing_keys: bool = False):
+        """
+
+        @rtype: Fixed flows.
+        """
+        super().__init__(keys, allow_missing_keys)
+        self.flow_slice = slice(flow_dim_start, flow_dim_end)
+
+    def get_rotate_matrix(self, theta):
+        rotate_matrix = np.array([
+            [math.cos(theta), -math.sin(theta)],
+            [math.sin(theta), math.cos(theta)],
+        ])
+
+        return rotate_matrix
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        for key in self.key_iterator(d):
+
+            all_transforms_flag = f"{key}_transforms"
+            rank_k = -1
+            if all_transforms_flag in d:
+                transforms = d[all_transforms_flag]
+                for t in transforms:
+                    if t["class"] == "RandRotate90d" and t["do_transforms"]:
+                        if rank_k == -1: rank_k = 0
+                        rank_k = (rank_k + t["extra_info"]["rand_k"]) % 4
+
+            if rank_k > 0:
+                flow_ = d[key][self.flow_slice]
+                # rotate vector in the field
+                C, H, W = flow_.shape
+                flow_ = self.get_rotate_matrix(math.pi / 2 * rank_k) @ flow_.reshape(C, H * W)
+                d[key][self.flow_slice] = flow_.reshape(C, H, W)
+
+        return d
+
+
+class Flow2dFlipFixd(MapTransform):
+
+    def __init__(self, keys: KeysCollection, flow_dim_start=0, flow_dim_end=2, allow_missing_keys: bool = False):
+        """
+
+        @rtype: Fixed flows.
+        """
+        super().__init__(keys, allow_missing_keys)
+        self.flow_slice = slice(flow_dim_start, flow_dim_end)
+        # theta = 0
+        # self.rotate_matrix = np.array([
+        #     [math.cos(theta), -math.sin(theta)],
+        #     [math.sin(theta), math.cos(theta)],
+        # ])
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        for key in self.key_iterator(d):
+
+            all_transforms_flag = f"{key}_transforms"
+            axis = None
+            if all_transforms_flag in d:
+                transforms = d[all_transforms_flag]
+                for t in transforms:
+                    if t["class"] == "RandAxisFlipd" and t["do_transforms"]:
+                        axis = t["extra_info"]["axis"]
+                        break
+
+            if axis is not None:
+                flow_ = d[key][self.flow_slice]
+                # rotate vector in the field
+                if axis == 0:
+                    flow_[:1] *= -1
+                elif axis == 1:
+                    flow_[1:] *= -1
+                else:
+                    raise RuntimeError("Only support 2d flow.")
+                C, H, W = flow_.shape
+
+                flow_ = flow_.reshape(C, H * W)
+                d[key][self.flow_slice] = flow_.reshape(C, H, W)
+
+        return d
+
+
 class StainNetNormalized(MapTransform):
 
     def __init__(self, keys: KeysCollection, checkpoint="./augment/stain_augment/StainNet/checkpoints/aligned_cytopathology_dataset/StainNet-3x0_best_psnr_layer3_ch32.pth",
@@ -205,7 +413,7 @@ class StainNetNormalized(MapTransform):
 
         for key in self.key_iterator(d):
             if not isinstance(d[key], torch.Tensor):
-                d[key] = torch.tensor(d[key], dtype=torch.float32)
+                d[key] = torch.from_numpy(d[key])
             d[key] = self.normalizer(d[key])
 
         return d
@@ -639,7 +847,7 @@ class CellF1Metric(CumulativeIterationMetric):
             y_pred: input data to compute, typical segmentation model output.
                 It must be one-hot format and first dim is batch, example shape: [16, 3, 32, 32]. The values
                 should be binarized.
-            y: ground truth to compute mean dice metric. It must be one-hot format and first dim is batch.
+            y: ground truth to compute mean f1 metric. It must be one-hot format and first dim is batch.
                 The values should be binarized.
 
         Raises:
@@ -815,6 +1023,149 @@ def three_classes2instance(label):
     return measure.label(label)
 
 
+import matplotlib.pyplot as plt
+
+
+def fig2data(fig):
+    """
+    fig = plt.figure()
+    image = fig2data(fig)
+    @brief Convert a Matplotlib figure to a 4D numpy array with RGBA channels and return it
+    @param fig a matplotlib figure
+    @return a numpy 3D array of RGBA values
+    """
+    import PIL.Image as Image
+    # draw the renderer
+    fig.canvas.draw()
+
+    # Get the RGBA buffer from the figure
+    w, h = fig.canvas.get_width_height()
+    buf = np.fromstring(fig.canvas.tostring_argb(), dtype=np.uint8)
+    buf.shape = (w, h, 4)
+
+    # canvas.tostring_argb give pixmap in ARGB mode. Roll the ALPHA channel to have it in RGBA mode
+    buf = np.roll(buf, 3, axis=2)
+    image = Image.frombytes("RGBA", (w, h), buf.tostring())
+    image = np.asarray(image)
+    return image
+
+
+def flow(slices_in,  # the 2D slices
+         titles=None,  # list of titles
+         cmaps=None,  # list of colormaps
+         width=15,  # width in in
+         img_indexing=True,  # whether to match the image view, i.e. flip y axis
+         grid=False,  # option to plot the images in a grid or a single row
+         show=True,  # option to actually show the plot (plt.show())
+         scale=1):  # note quiver essentially draws quiver length = 1/scale
+    '''
+    plot a grid of flows (2d+2 images)
+    '''
+
+    # input processing
+    nb_plots = len(slices_in)
+    for slice_in in slices_in:
+        assert len(slice_in.shape) == 3, 'each slice has to be 3d: 2d+2 channels'
+        assert slice_in.shape[-1] == 2, 'each slice has to be 3d: 2d+2 channels'
+
+    def input_check(inputs, nb_plots, name):
+        ''' change input from None/single-link '''
+        if not isinstance(inputs, (list, tuple)):
+            inputs = [inputs]
+        assert (inputs is None) or (len(inputs) == nb_plots) or (len(inputs) == 1), \
+            'number of %s is incorrect' % name
+        if inputs is None:
+            inputs = [None]
+        if len(inputs) == 1:
+            inputs = [inputs[0] for _ in range(nb_plots)]
+        return inputs
+
+    if img_indexing:
+        for si, slc in enumerate(slices_in):
+            slices_in[si] = np.flipud(slc)
+
+    titles = input_check(titles, nb_plots, 'titles')
+    cmaps = input_check(cmaps, nb_plots, 'cmaps')
+    scale = input_check(scale, nb_plots, 'scale')
+
+    # figure out the number of rows and columns
+    if grid:
+        if isinstance(grid, bool):
+            rows = np.floor(np.sqrt(nb_plots)).astype(int)
+            cols = np.ceil(nb_plots / rows).astype(int)
+        else:
+            assert isinstance(grid, (list, tuple)), \
+                "grid should either be bool or [rows,cols]"
+            rows, cols = grid
+    else:
+        rows = 1
+        cols = nb_plots
+
+    # prepare the subplot
+    fig, axs = plt.subplots(rows, cols)
+    if rows == 1 and cols == 1:
+        axs = [axs]
+
+    for i in range(nb_plots):
+        col = np.remainder(i, cols)
+        row = np.floor(i / cols).astype(int)
+
+        # get row and column axes
+        row_axs = axs if rows == 1 else axs[row]
+        ax = row_axs[col]
+
+        # turn off axis
+        ax.axis('off')
+
+        # add titles
+        if titles is not None and titles[i] is not None:
+            ax.title.set_text(titles[i])
+
+        u, v = slices_in[i][..., 0], slices_in[i][..., 1]
+        colors = np.arctan2(u, v)
+        colors[np.isnan(colors)] = 0
+        norm = Normalize()
+        norm.autoscale(colors)
+        if cmaps[i] is None:
+            colormap = cm.winter
+        else:
+            raise Exception("custom cmaps not currently implemented for plt.flow()")
+
+        # show figure
+        ax.quiver(u, v,
+                  color=colormap(norm(colors).flatten()),
+                  angles='xy',
+                  units='xy',
+                  scale=scale[i])
+        ax.axis('equal')
+
+    # clear axes that are unnecessary
+    for i in range(nb_plots, col * row):
+        col = np.remainder(i, cols)
+        row = np.floor(i / cols).astype(int)
+
+        # get row and column axes
+        row_axs = axs if rows == 1 else axs[row]
+        ax = row_axs[col]
+
+        ax.axis('off')
+
+    # show the plots
+    fig.set_size_inches(width, rows / cols * width)
+    plt.tight_layout()
+
+    if show:
+        plt.show()
+        plt.close(fig)
+
+    return fig, axs, plt
+
+
+"""
+Obtained from cellpose
+"""
+
+
 def resize_image(img0, Ly=None, Lx=None, rsz=None, interpolation=cv2.INTER_LINEAR, no_channels=False):
     """ resize image for computing flows / unresize for computing dynamics
     Parameters
@@ -833,7 +1184,7 @@ def resize_image(img0, Ly=None, Lx=None, rsz=None, interpolation=cv2.INTER_LINEA
     """
     if Ly is None and rsz is None:
         error_message = 'must give size to resize to or factor to use for resizing'
-        transforms_logger.critical(error_message)
+        print(error_message)
         raise ValueError(error_message)
 
     if Ly is None:
@@ -859,3 +1210,41 @@ def resize_image(img0, Ly=None, Lx=None, rsz=None, interpolation=cv2.INTER_LINEA
     else:
         imgs = cv2.resize(img0, (Lx, Ly), interpolation=interpolation)
     return imgs
+
+
+# modified to use sinebow color
+def dx_to_circ(dP, transparency=False, mask=None):
+    """ dP is 2 x Y x X => 'optic' flow representation
+
+    Parameters
+    -------------
+
+    dP: 2xLyxLx array
+        Flow field components [dy,dx]
+
+    transparency: bool, default False
+        magnitude of flow controls opacity, not lightness (clear background)
+
+    mask: 2D array
+        Multiplies each RGB component to suppress noise
+
+    """
+
+    dP = np.array(dP)
+    mag = np.clip(np.sqrt(np.sum(dP ** 2, axis=0)), 0, 1.)
+    angles = np.arctan2(dP[1], dP[0]) + np.pi
+    a = 2
+    r = ((np.cos(angles) + 1) / a)
+    g = ((np.cos(angles + 2 * np.pi / 3) + 1) / a)
+    b = ((np.cos(angles + 4 * np.pi / 3) + 1) / a)
+
+    if transparency:
+        im = np.stack((r, g, b, mag), axis=-1)
+    else:
+        im = np.stack((r * mag, g * mag, b * mag), axis=-1)
+
+    if mask is not None and transparency and dP.shape[0] < 3:
+        im[:, :, -1] *= mask
+
+    im = (np.clip(im, 0, 1) * 255).astype(np.uint8)
+    return im
