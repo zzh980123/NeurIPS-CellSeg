@@ -418,7 +418,7 @@ def flatten_probas(probas, labels, ignore=None):
         probas = probas.view(B, 1, H, W)
     B, C, H, W = probas.size()
     probas = probas.permute(0, 2, 3, 1).contiguous().view(-1, C)  # B * H * W, C = P, C
-    labels = labels.view(-1)
+    labels = labels.reshape(-1)
     if ignore is None:
         return probas, labels
     valid = (labels != ignore)

@@ -287,7 +287,6 @@ class Flow2dTransposeFixd(MapTransform):
             [math.sin(theta), math.cos(theta)],
         ])
 
-
     def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
         d = dict(data)
 
@@ -340,6 +339,38 @@ class Flow2dRoatation90Fixd(MapTransform):
                 C, H, W = flow_.shape
                 flow_ = self.get_rotate_matrix(math.pi / 2 * rank_k) @ flow_.reshape(C, H * W)
                 d[key][self.flow_slice] = flow_.reshape(C, H, W)
+
+        return d
+
+
+class Flow2dRoatateFixd(MapTransform):
+
+    def __init__(self, keys: KeysCollection, flow_dim_start=0, flow_dim_end=2, allow_missing_keys: bool = False):
+        """
+
+        @rtype: Fixed flows.
+        """
+        super().__init__(keys, allow_missing_keys)
+        self.flow_slice = slice(flow_dim_start, flow_dim_end)
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        for key in self.key_iterator(d):
+            assert d[key].ndim == 2
+
+            all_transforms_flag = f"{key}_transforms"
+            rot_mat = np.eye(d[key].ndim)
+            if all_transforms_flag in d:
+                transforms = d[all_transforms_flag]
+                for t in transforms:
+                    if t["class"] == "RandRotated" and t["do_transforms"]:
+                        rot_mat = rot_mat @ t["extra_info"]["rot_mat"]
+
+            flow_ = d[key][self.flow_slice]
+            # rotate vector in the field
+            C, H, W = flow_.shape
+            flow_ = rot_mat @ flow_.reshape(C, H * W)
+            d[key][self.flow_slice] = flow_.reshape(C, H, W)
 
         return d
 

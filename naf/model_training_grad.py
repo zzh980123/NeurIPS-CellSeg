@@ -11,6 +11,7 @@ import tqdm
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
+from losses import sim
 from losses.sim import DirectionLoss
 from transformers import flow_gen
 from transformers.utils import CellF1Metric, dx_to_circ, TiffReader2, flow, fig2data, Flow2dTransposeFixd, Flow2dRoatation90Fixd, Flow2dFlipFixd
@@ -18,13 +19,13 @@ import monai.networks
 
 
 def label2seg_and_grad(labels):
-    seg_label = labels[:, :1]
+    seg_label = labels[:, 1:2]
     seg_label[seg_label > 0] = 1
     labels_onehot = monai.networks.one_hot(
         seg_label, 2
     )
 
-    return labels_onehot, labels[:, 2:]
+    return labels[:, :1], labels_onehot, labels[:, 2:]
 
 
 def output2seg_and_grad(outputs):
@@ -55,13 +56,17 @@ def main():
     parser.add_argument(
         "--input_size", default=512, type=int, help="input size"
     )
+    parser.add_argument('--continue_train', default=False)
+    # parser.add_argument('--model_path', default='./naf/work_dir/', help='path where to save models and segmentation results')
+
     # Training parameters
     parser.add_argument("--batch_size", default=6, type=int, help="Batch size per GPU")
     parser.add_argument("--max_epochs", default=1000, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=100, type=int)
     parser.add_argument("--initial_lr", type=float, default=5e-4, help="learning rate")
-    parser.add_argument("--amp", type=bool, default=True, help="using amp")
+    parser.add_argument("--amp", type=bool, default=False, help="using amp")
+    parser.add_argument("--grad_lambda", type=float, default=1, help="grad hyper-parameter")
 
     args = parser.parse_args()
 
@@ -96,7 +101,7 @@ def main():
         RandGaussianSmoothd,
         RandHistogramShiftd,
         EnsureTyped,
-        EnsureType, EnsureChannelFirstd
+        EnsureType, EnsureChannelFirstd, RandRotated
     )
     from monai.visualize import plot_2d_or_3d_image
     from datetime import datetime
@@ -107,6 +112,7 @@ def main():
     monai.config.print_config()
 
     # %% set training/validation split
+
     np.random.seed(args.seed)
     model_path = join(args.work_dir, args.model_name + "_grad")
     os.makedirs(model_path, exist_ok=True)
@@ -127,6 +133,8 @@ def main():
     val_split = int(img_num * val_frac)
     train_indices = indices[val_split:]
     val_indices = indices[:val_split]
+
+    grad_lambda = args.grad_lambda
 
     train_files = [
         {"img": join(img_path, img_names[i]), "label": join(gt_path, gt_names[i])}
@@ -194,7 +202,6 @@ def main():
             #     keys=["img"], target_dims=2, allow_missing_keys=True
             # ),
 
-
             EnsureChannelFirstd(
                 keys=["img"],
             ),  # image: (3, H, W)
@@ -257,15 +264,16 @@ def main():
     # stain_model.load_state_dict(torch.load(check_point))
     # stain_model.eval()
     # stain_model.requires_grad_(False)
+    restart_epoch = 1
 
     # loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
-    loss_function_1 = monai.losses.DiceCELoss(softmax=True).to(device)
+    loss_function_1 = monai.losses.DiceCELoss().to(device)
     loss_function_2 = torch.nn.MSELoss()
+    loss_function_4 = sim.LovaszSoftmaxLoss()
     loss_function_3 = DirectionLoss()
 
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
-    # smooth_transformer = GaussianSmooth(sigma=1)
 
     # start a typical PyTorch training
     max_epochs = args.max_epochs
@@ -278,12 +286,27 @@ def main():
     torch.autograd.set_detect_anomaly(True)
     writer = SummaryWriter(model_path)
 
+    if args.continue_train:
+        load_model_path = join(model_path, 'best_F1_model.pth')
+        if not os.path.exists(load_model_path):
+            load_model_path = join(args.model_path, 'best_Dice_model.pth')
+        # load model parameters
+        checkpoint = torch.load(load_model_path, map_location=torch.device(device))
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        optimizer.param_groups[0]['capturable'] = True
+        restart_epoch = checkpoint['epoch']
+        history_loss = checkpoint['loss']
+        epoch_loss_values.append(history_loss)
+        best_metric_epoch = restart_epoch
+
     amp = args.amp
     scaler = None
     if amp:
         scaler = torch.cuda.amp.GradScaler()
 
-    for epoch in range(1, max_epochs):
+    for epoch in range(restart_epoch, max_epochs):
         model.train()
         epoch_loss = 0
         checkpoint = None
@@ -297,13 +320,25 @@ def main():
             optimizer.zero_grad()
             # inputs = stain_model(inputs).to(device)
 
-            with torch.cuda.amp.autocast():
+            if amp:
+                with torch.cuda.amp.autocast():
+                    outputs = model(inputs)
+                    _, labels_onehot, label_grad_yx = label2seg_and_grad(labels)
+                    pred_label, pred_grad = output2seg_and_grad(outputs)
+                    pred_label = torch.softmax(pred_label, dim=1)
+
+                    loss = loss_function_1(pred_label, labels_onehot) + \
+                           grad_lambda * loss_function_2(pred_grad, label_grad_yx * 5)
+            else:
                 outputs = model(inputs)
-                labels_onehot, label_grad_yx = label2seg_and_grad(labels)
+                _, labels_onehot, label_grad_yx = label2seg_and_grad(labels)
                 pred_label, pred_grad = output2seg_and_grad(outputs)
-                loss = loss_function_1(torch.softmax(pred_label, dim=1), labels_onehot) + \
-                       5 * loss_function_2(pred_grad, label_grad_yx * 5) \
-                        + loss_function_3.forward(pred_grad, label_grad_yx)
+                pred_label = torch.softmax(pred_label, dim=1)
+                seg_label = labels[:, 1:2]
+                loss = 0.8 * loss_function_1(pred_label, labels_onehot) + \
+                       grad_lambda * loss_function_2(pred_grad, label_grad_yx * 5) + \
+                       0.2 * loss_function_4(pred_label, seg_label)
+                        # + loss_function_3.forward(pred_grad, label_grad_yx)
 
             if amp and scaler:
                 scaler.scale(loss).backward()
@@ -344,13 +379,13 @@ def main():
                     val_images, val_labels = val_data["img"].to(device), val_data["label"].to(device)
                     # val_images = stain_model(val_images).to(device)
 
-                    val_labels_onehot, label_grad = label2seg_and_grad(val_labels)
+                    val_instance_label, val_labels_onehot, label_grad = label2seg_and_grad(val_labels)
 
                     roi_size = (args.input_size, args.input_size)
                     sw_batch_size = args.batch_size
 
                     val_outputs = sliding_window_inference(
-                        val_images, roi_size, sw_batch_size, model
+                        val_images, roi_size, sw_batch_size, model, overlap=0.5
                     )
 
                     pred_label, pred_grad = output2seg_and_grad(val_outputs)
@@ -365,12 +400,12 @@ def main():
 
                     instance_label, _ = flow_gen.compute_masks(pred_grad_cpu.numpy(),
                                                                pred_label_cpu[1].numpy(),
-                                                               cellprob_threshold=0.5, use_gpu=True, niter=400)
+                                                               cellprob_threshold=0.5, use_gpu=True)
 
                     # numpy.ndarray -> torch.tensor
                     # H x W -> B x C x H x W
                     instance_label = torch.from_numpy(instance_label.astype(np.float32))[None, None, ...]
-                    val_instance_label = val_labels[:, :1].cpu()
+                    val_instance_label = val_instance_label.cpu()
 
                     del pred_grad, label_grad
 
@@ -396,7 +431,6 @@ def main():
                         # val_pred_instance_label_board = instance_label
 
                     f1 = f1_metric(y_pred=instance_label, y=val_instance_label)
-                    print(instance_label.max(), val_instance_label.max())
                     dice = dice_metric(y_pred=pred_label, y=val_labels_onehot)
 
                     print(os.path.basename(
