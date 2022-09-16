@@ -584,7 +584,7 @@ def remove_bad_flow_masks(masks, flows, threshold=0.4, use_gpu=False, device=Non
         size [Ly x Lx] or [Lz x Ly x Lx]
 
     """
-    merrors, _ = flow_error(masks, flows, use_gpu, device)
+    merrors, flow_mask = flow_error(masks, flows, use_gpu, device)
     badi = 1 + (merrors > threshold).nonzero()[0]
     masks[np.isin(masks, badi)] = 0
     return masks

@@ -1049,6 +1049,33 @@ def post_process(label, max_size=60 * 60):
     return label
 
 
+def post_process_2(label, max_size=60 * 60):
+    ids = np.unique(label)
+
+    min_id = 1
+    max_id = min(40, ids.max()) + 1
+    # label[label > 0] = 1
+    sizes = []
+    for i in range(min_id, max_id):
+        sizes.append((label == i).sum())
+
+    sizes.sort()
+
+    lll = len(sizes[max_id - 10:max_id])
+
+    avg_size = sum(sizes[max_id - 10: max_id]) / max(lll, 1)
+
+    if avg_size >= max_size:
+        label[label > 0] = 1
+        # back_label = 1 - label
+        iter_ = min(int(avg_size ** .5) // 16, 4)
+        # label = ~binary_dilation(back_label, iterations=iter_)
+        label = binary_erosion(label, iterations=iter_)
+        label = measure.label(morphology.remove_small_holes(label, area_threshold=16), background=0)
+        label = grey_dilation(label, size=(iter_ * 2, iter_ * 2))
+
+    return label
+
 def three_classes2instance(label):
     label = label > 0
     return measure.label(label)

@@ -14,7 +14,6 @@ from monai.metrics import MSEMetric
 
 from transformers.utils import LoadJson2Tensor
 
-
 def main():
     parser = argparse.ArgumentParser("Microscopy image size and style predict")
     # Dataset parameters

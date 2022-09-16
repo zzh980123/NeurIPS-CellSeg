@@ -9,7 +9,7 @@ import os
 
 import tqdm
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
 from losses import sim
 from losses.sim import DirectionLoss
@@ -61,12 +61,13 @@ def main():
 
     # Training parameters
     parser.add_argument("--batch_size", default=6, type=int, help="Batch size per GPU")
-    parser.add_argument("--max_epochs", default=1000, type=int)
+    parser.add_argument("--max_epochs", default=280, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=100, type=int)
     parser.add_argument("--initial_lr", type=float, default=6e-5, help="learning rate")
     parser.add_argument("--amp", type=bool, default=False, help="using amp")
     parser.add_argument("--grad_lambda", type=float, default=1, help="grad hyper-parameter")
+    parser.add_argument("--swa_start_epoch", type=int, default=120)
 
     args = parser.parse_args()
 
@@ -258,6 +259,10 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = model_factory(args.model_name.lower(), device, args, in_channels=3)
+
+    from torch.optim.swa_utils import AveragedModel, SWALR
+    from torch.optim.lr_scheduler import CosineAnnealingLR
+
     # from augment.stain_augment.StainNet.models import StainNet
     # stain_model = StainNet()
     # check_point = "./augment/stain_augment/StainNet/checkpoints/aligned_cytopathology_dataset/StainNet-3x0_best_psnr_layer3_ch32.pth"
@@ -270,10 +275,15 @@ def main():
     ce_dice_loss = monai.losses.DiceCELoss().to(device)
     mse_loss = torch.nn.MSELoss().to(device)
     lovasz_loss = sim.LovaszSoftmaxLoss().to(device)
-    loss_function_3 = DirectionLoss()
+    # loss_function_3 = DirectionLoss()
 
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
+
+    swa_start = args.swa_start_epoch
+
+    scheduler = CosineAnnealingLR(optimizer, T_max=100)
+    swa_scheduler = SWALR(optimizer, swa_lr=0.05, anneal_epochs=80, anneal_strategy="cos")
 
     # start a typical PyTorch training
     max_epochs = args.max_epochs
@@ -303,6 +313,8 @@ def main():
         if 'eval_metric' in checkpoint:
             best_metric = checkpoint['eval_metric']
 
+    swa_model: AveragedModel = AveragedModel(model, device=device, use_buffers=True)
+
     amp = args.amp
     scaler = None
     if amp:
@@ -314,6 +326,7 @@ def main():
         checkpoint = None
 
         train_bar = tqdm.tqdm(enumerate(train_loader, 1), total=len(train_loader))
+        step = 1
         for step, batch_data in train_bar:
             inputs, labels = batch_data["img"].to(device), batch_data["label"].to(
                 device
@@ -333,7 +346,7 @@ def main():
                        0.2 * lovasz_loss(pred_label, seg_label) + \
                        grad_lambda * mse_loss(pred_grad, label_grad_yx * 5)
 
-                    # + loss_function_3.forward(pred_grad, label_grad_yx)
+                # + loss_function_3.forward(pred_grad, label_grad_yx)
 
             if amp and scaler:
                 scaler.scale(loss).backward()
@@ -355,15 +368,36 @@ def main():
         epoch_loss_values.append(epoch_loss)
         print(f"epoch {epoch} average loss: {epoch_loss:.4f}")
         eval_loss_value = best_metric
+
+        # SWA
+        if epoch > swa_start:
+            swa_model.update_parameters(model)
+            print(f"update SWA({epoch}) ...")
+
+            swa_scheduler.step()
+
+        else:
+            scheduler.step()
+
+        save_model = swa_model.module if epoch > swa_start else model
+
         checkpoint = {
             "epoch": epoch,
-            "model_state_dict": model.state_dict(),
+            "model_state_dict": save_model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": epoch_loss_values,
             "eval_metric": eval_loss_value
         }
+
         if epoch >= 20 and epoch % val_interval == 0:
-            model.eval()
+            # SWA update bn
+            # The SWA code in the original paper has some issues: only one iter can't move the BatchNorm's running mean and var to current values.
+            # so I disable the BN update and copy the running mean and var when SWA Avgmodel update. See the parameter /use_buffers/
+            # torch.optim.swa_utils.update_bn(train_loader, swa_model)
+            if epoch > swa_start:
+                swa_model.eval()
+            else:
+                model.eval()
             with torch.no_grad():
                 val_images_board = None
                 val_labels_board = None
@@ -382,8 +416,10 @@ def main():
                     roi_size = (args.input_size, args.input_size)
                     sw_batch_size = args.batch_size
 
+                    pred_model = swa_model if epoch > swa_start else model
+
                     val_outputs = sliding_window_inference(
-                        val_images, roi_size, sw_batch_size, model, overlap=0.5, mode="gaussian"
+                        val_images, roi_size, sw_batch_size, pred_model, overlap=0.5, mode="gaussian"
                     )
 
                     pred_label, pred_grad = output2seg_and_grad(val_outputs)
@@ -392,13 +428,15 @@ def main():
 
                     pred_grad_cpu = pred_grad.detach().cpu()[0]
                     pred_label_cpu = pred_label.detach().cpu()[0]
+                    pred_label_cpu = torch.argmax(pred_label_cpu, dim=1)
+
                     label_grad_cpu = label_grad.detach().cpu()[0]
                     val_grad = dx_to_circ(pred_grad_cpu).transpose(2, 0, 1)[None, ...]
                     val_label_grad = dx_to_circ(label_grad_cpu).transpose(2, 0, 1)[None, ...]
 
                     instance_label, _ = flow_gen.compute_masks(pred_grad_cpu.numpy(),
-                                                               pred_label_cpu[1].numpy(),
-                                                               cellprob_threshold=0.5, use_gpu=True)
+                                                               pred_label_cpu.numpy(),
+                                                               cellprob_threshold=0.5, flow_threshold=1.5, use_gpu=True)
 
                     # numpy.ndarray -> torch.tensor
                     # H x W -> B x C x H x W
@@ -445,7 +483,6 @@ def main():
                 if f1_metric_ > best_metric and checkpoint is not None:
                     best_metric = f1_metric_
                     best_metric_epoch = epoch + 1
-                    # torch.save(checkpoint, join(model_path, "best_Dice_model.pth"))
                     checkpoint["eval_metric"] = best_metric
                     torch.save(checkpoint, join(model_path, "best_F1_model.pth"))
                     print("saved new best metric model")
@@ -479,6 +516,7 @@ def main():
         f"train completed, best_metric: {best_metric:.4f} at epoch: {best_metric_epoch}"
     )
     writer.close()
+
     torch.save(checkpoint, join(model_path, "final_model.pth"))
     np.savez_compressed(
         join(model_path, "train_log.npz"),

@@ -23,6 +23,9 @@ class RGB(nn.Module):
         return (x - self.mean) / self.std
 
 
+import torch
+
+
 class DaFormaerCoATNet_v3(nn.Module):
 
     def __init__(self,
@@ -58,7 +61,14 @@ class DaFormaerCoATNet_v3(nn.Module):
 
         self.upsample2 = MixUpSample(scale_factor=2)
         self.downsample = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.conv =nn.Conv2d(in_channels=in_channel, out_channels=out_channel, kernel_size=3, padding=1)
+        # self.conv =nn.Conv2d(in_channels=in_channel, out_channels=out_channel, kernel_size=3, padding=1)
+        self.conv = nn.Sequential(
+            *[
+                nn.Conv2d(in_channel, out_channel, 3, padding=1, bias=False),
+                nn.BatchNorm2d(out_channel),
+                nn.ReLU(inplace=True),
+            ]
+        )
 
         # try to load the pretrained model of CoAT
         if encoder_pretrain is not None:
