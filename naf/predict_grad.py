@@ -1,6 +1,6 @@
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
 
 from transformers import flow_gen
 
@@ -50,6 +50,7 @@ def main():
     parser.add_argument("-o", '--output_path', default='./outputs', type=str, help='output path')
     parser.add_argument('--model_path', default='./work_dir/swinunetrv2_3class', help='path where to save models and segmentation results')
     parser.add_argument('--show_overlay', required=False, default=False, action="store_true", help='save segmentation overlay')
+    parser.add_argument('--show_grad', required=False, default=False, action="store_true", help='save segmentation grad')
 
     # Model parameters
     parser.add_argument('--model_name', default='swinunetrv2', help='select mode: unet, unetr, swinunetr，swinunetrv2')
@@ -76,7 +77,7 @@ def main():
     model.load_state_dict(checkpoint['model_state_dict'])
     # %%
     roi_size = (args.input_size, args.input_size)
-    sw_batch_size = 1
+    sw_batch_size = 2
     model.eval()
     # model = model.half()
     torch.set_grad_enabled(False)
@@ -108,22 +109,28 @@ def main():
             t0 = time.time()
             test_npy01 = pre_img_data / np.max(pre_img_data)
             test_tensor = torch.from_numpy(np.expand_dims(test_npy01, 0)).permute(0, 3, 1, 2).type(torch.FloatTensor).to(device)
-            test_pred_out = sliding_window_inference(test_tensor, roi_size, sw_batch_size, model, mode="gaussian", overlap=0.5, padding_mode="replicate")
+            test_pred_out = sliding_window_inference(test_tensor, roi_size, sw_batch_size, model, mode="gaussian",
+                                                     overlap=0.5)
 
             pred_label, pred_grad = output2seg_and_grad(test_pred_out)
 
             # pred_label = torch.softmax(pred_label, dim=1)
             pred_label = torch.argmax(pred_label, dim=1)  # (B, C, H, W)
-
             pred_grad_cpu = pred_grad.detach().cpu()[0].numpy()
             pred_label_cpu = pred_label.detach().cpu()[0].numpy()
             # label_grad_cpu = label_grad.detach().cpu()[0]
             if pred_grad_cpu.shape[2] <= 6000 and pred_grad_cpu.shape[1] <= 6000:
+                # 74.87
                 test_pred_mask, _ = flow_gen.compute_masks(pred_grad_cpu,
                                                            pred_label_cpu,
-                                                           cellprob_threshold=0.5, flow_threshold=1.6, niter=400, use_gpu=True, min_size=16)
+                                                           cellprob_threshold=0.5, flow_threshold=2, niter=400, use_gpu=True, min_size=16)
+                #
+                # test_pred_mask, _ = flow_gen.compute_masks(pred_grad_cpu,
+                #                                            pred_label_cpu,
+                #                                            cellprob_threshold=0.5, use_gpu=True)
                 if test_pred_mask.max() == 0:
                     test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.5), 16))
+
             else:
                 test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.5), 16))
 
@@ -136,7 +143,10 @@ def main():
             tif.imwrite(join(output_path, img_name.split('.')[0] + '_label.tiff'), test_pred_mask, compression='zlib')
             t1 = time.time()
             print(f'Prediction finished: {img_name}; img size = {pre_img_data.shape}; costing: {t1 - t0:.2f}s')
-
+            if args.show_grad:
+                from transformers.utils import dx_to_circ
+                rgb_grad = dx_to_circ(pred_grad_cpu)
+                tif.imwrite(join(output_path, 'overlay_' + img_name.split('.')[0] + '_flow.tiff'), rgb_grad, compression='zlib')
             if args.show_overlay:
                 boundary = segmentation.find_boundaries(test_pred_mask, connectivity=1, mode='inner')
                 boundary = morphology.binary_dilation(boundary, morphology.disk(2))

@@ -353,18 +353,29 @@ class Flow2dRoatateFixd(MapTransform):
         super().__init__(keys, allow_missing_keys)
         self.flow_slice = slice(flow_dim_start, flow_dim_end)
 
+    def get_rotate_matrix(self, theta):
+        rotate_matrix = np.array([
+            [math.cos(theta), -math.sin(theta)],
+            [math.sin(theta), math.cos(theta)],
+        ])
+
+        return rotate_matrix
+
     def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
         d = dict(data)
         for key in self.key_iterator(d):
-            assert d[key].ndim == 2
+            assert d[key][self.flow_slice].ndim == 3
 
             all_transforms_flag = f"{key}_transforms"
-            rot_mat = np.eye(d[key].ndim)
+            rot_mat = np.eye(2)
             if all_transforms_flag in d:
                 transforms = d[all_transforms_flag]
                 for t in transforms:
                     if t["class"] == "RandRotated" and t["do_transforms"]:
-                        rot_mat = rot_mat @ t["extra_info"]["rot_mat"]
+                        _t = t["extra_info"]["rot_mat"]
+                        inv_rot_mat = np.linalg.inv(_t)
+
+                        rot_mat = rot_mat @ inv_rot_mat[:2, :2]
 
             flow_ = d[key][self.flow_slice]
             # rotate vector in the field
@@ -468,6 +479,28 @@ class StainNormalized(MapTransform):
 
         return d
 
+
+class ColorJitterd(MapTransform):
+    def __init__(self, keys: KeysCollection, brightness=.1, contrast=.1, saturation=.1, hue=.2, allow_missing_keys: bool = False) -> None:
+        """
+        Args:
+            keys: keys of the corresponding items to be transformed.
+                See also: :py:class:`monai.transforms.compose.MapTransform`
+            allow_missing_keys: don't raise exception if key is missing.
+        """
+        super().__init__(keys, allow_missing_keys)
+        from torchvision.transforms.transforms import ColorJitter
+        self.colorconvert = ColorJitter(brightness=brightness, contrast=contrast, saturation=saturation, hue=hue)
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+
+        for key in self.key_iterator(d):
+            if isinstance(d[key], np.ndarray):
+                d[key] = torch.from_numpy(d[key])
+            d[key] = self.colorconvert(d[key])
+
+        return d
 
 class FFTFilterd(MapTransform):
     """

@@ -110,7 +110,7 @@ class DaFormaerCoATNet_db(nn.Module):
 
             return upsample_logit
         elif self.mode == 2:
-            feature = encode_info[-1].detach()
+            feature = encode_info[-1]
             size_type = self.sr(feature)
             return size_type
         else:

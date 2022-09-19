@@ -335,13 +335,17 @@ class StableBCELoss(torch.nn.modules.Module):
 
 
 class DirectionLoss(torch.nn.modules.Module):
-    def __init__(self):
+    def __init__(self, eps=1e-5):
         super(DirectionLoss, self).__init__()
+        self.eps = eps
 
     def forward(self, input, target):
-        direction_score = torch.sum(input * target, dim=1, keepdim=True)
+        normal_input = input / (torch.abs(torch.norm(input, dim=1, keepdim=True)) + self.eps)
+        normal_target = target / (torch.abs(torch.norm(target, dim=1, keepdim=True)) + self.eps)
+        cos_theta = torch.sum(normal_input * normal_target, dim=1, keepdim=True)
+        direction_score = (cos_theta - 1) ** 2
 
-        return torch.mean(torch.square(direction_score - torch.sqrt(torch.sum(input ** 2, dim=1))))
+        return torch.mean(direction_score)
 
 
 def binary_xloss(logits, labels, ignore=None):

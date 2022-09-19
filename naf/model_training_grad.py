@@ -9,7 +9,7 @@ import os
 
 import tqdm
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 from losses import sim
 from losses.sim import DirectionLoss
@@ -270,7 +270,7 @@ def main():
     ce_dice_loss = monai.losses.DiceCELoss().to(device)
     mse_loss = torch.nn.MSELoss().to(device)
     lovasz_loss = sim.LovaszSoftmaxLoss().to(device)
-    loss_function_3 = DirectionLoss()
+    loss_function_3 = DirectionLoss().to(device)
 
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
@@ -331,9 +331,10 @@ def main():
 
                 loss = 0.8 * ce_dice_loss(pred_label, labels_onehot) + \
                        0.2 * lovasz_loss(pred_label, seg_label) + \
-                       grad_lambda * mse_loss(pred_grad, label_grad_yx * 5)
+                       grad_lambda * mse_loss(pred_grad, label_grad_yx * 5) +\
+                       0.2 * loss_function_3.forward(pred_grad, label_grad_yx)
 
-                    # + loss_function_3.forward(pred_grad, label_grad_yx)
+                # + loss_function_3.forward(pred_grad, label_grad_yx)
 
             if amp and scaler:
                 scaler.scale(loss).backward()
@@ -373,7 +374,7 @@ def main():
                 val_instance_label_board = None
                 val_pred_instance_label_board = None
 
-                for val_step, val_data in enumerate(val_loader, 1):
+                for val_step, val_data in enumerate(val_loader):
                     val_images, val_labels = val_data["img"].to(device), val_data["label"].to(device)
                     # val_images = stain_model(val_images).to(device)
 
@@ -458,8 +459,7 @@ def main():
                 writer.add_scalars("val_metrics", {"f1": f1_metric_, "dice": dice_metric_}, epoch + 1)
 
                 # plot the last model output as GIF image in TensorBoard with the corresponding image and label
-                if val_images_board is not None:
-                    plot_2d_or_3d_image(val_images_board, epoch, writer, index=0, tag="image", max_channels=3)
+                plot_2d_or_3d_image(val_images_board, epoch, writer, index=0, tag="image", max_channels=3)
                 plot_2d_or_3d_image(val_labels_board, epoch, writer, index=0, tag="label")
                 plot_2d_or_3d_image(val_outputs_board, epoch, writer, index=0, tag="output", max_channels=3)
                 plot_2d_or_3d_image(val_grad_board, epoch, writer, index=0, tag="grad", max_channels=3)

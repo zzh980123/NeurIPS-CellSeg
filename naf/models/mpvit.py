@@ -706,6 +706,107 @@ class MPViT(nn.Module):
         return out
 
 
+class MPViTEncoder(nn.Module):
+    """Multi-Path ViT class."""
+    def __init__(
+        self,
+        img_size=224,
+        num_stages=4,
+        num_path=[4, 4, 4, 4],
+        num_layers=[1, 1, 1, 1],
+        embed_dims=[64, 128, 256, 512],
+        mlp_ratios=[8, 8, 4, 4],
+        num_heads=[8, 8, 8, 8],
+        drop_path_rate=0.0,
+        in_chans=3,
+        num_classes=1000,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.num_classes = num_classes
+        self.num_stages = num_stages
+
+        dpr = dpr_generator(drop_path_rate, num_layers, num_stages)
+
+        self.stem = nn.Sequential(
+            Conv2d_BN(
+                in_chans,
+                embed_dims[0] // 2,
+                kernel_size=3,
+                stride=2,
+                pad=1,
+                act_layer=nn.Hardswish,
+            ),
+            Conv2d_BN(
+                embed_dims[0] // 2,
+                embed_dims[0],
+                kernel_size=3,
+                stride=2,
+                pad=1,
+                act_layer=nn.Hardswish,
+            ),
+        )
+
+        # Patch embeddings.
+        self.patch_embed_stages = nn.ModuleList([
+            Patch_Embed_stage(
+                embed_dims[idx],
+                num_path=num_path[idx],
+                isPool=False if idx == 0 else True,
+            ) for idx in range(self.num_stages)
+        ])
+
+        # Multi-Head Convolutional Self-Attention (MHCA)
+        self.mhca_stages = nn.ModuleList([
+            MHCA_stage(
+                embed_dims[idx],
+                embed_dims[idx + 1]
+                if not (idx + 1) == self.num_stages else embed_dims[idx],
+                num_layers[idx],
+                num_heads[idx],
+                mlp_ratios[idx],
+                num_path[idx],
+                drop_path_list=dpr[idx],
+            ) for idx in range(self.num_stages)
+        ])
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        """initialization"""
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=0.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def get_classifier(self):
+        """get classifier function"""
+        return self.head
+
+    def forward_features(self, x):
+        """forward feature function"""
+
+        # x's shape : [B, C, H, W]
+
+        x = self.stem(x)  # Shape : [B, C, H/4, W/4]
+
+        for idx in range(self.num_stages):
+            att_inputs = self.patch_embed_stages[idx](x)
+            x = self.mhca_stages[idx](att_inputs)
+
+        return x
+
+    def forward(self, x):
+        """foward function"""
+        x = self.forward_features(x)
+
+        return x
+
+
 @register_model
 def mpvit_tiny(**kwargs):
     """mpvit_tiny :

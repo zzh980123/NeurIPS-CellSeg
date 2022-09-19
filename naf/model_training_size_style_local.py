@@ -6,10 +6,10 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 
 import argparse
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 from skimage import measure
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 import tqdm
 from monai.metrics import MSEMetric
@@ -45,11 +45,11 @@ def main():
         "--input_size", default=512, type=int, help="segmentation classes"
     )
     # Training parameters
-    parser.add_argument("--batch_size", default=6, type=int, help="Batch size per GPU")
+    parser.add_argument("--batch_size", default=4, type=int, help="Batch size per GPU")
     parser.add_argument("--max_epochs", default=2000, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=150, type=int)
-    parser.add_argument("--initial_lr", type=float, default=1e-4, help="learning rate")
+    parser.add_argument("--initial_lr", type=float, default=1e-3, help="learning rate")
 
     args = parser.parse_args()
 
@@ -289,9 +289,9 @@ def main():
 
             zoomed_label = labels.view(B) * zoom_batch ** 2
 
-            rate = pred_size / zoomed_label
+            ratio = pred_size / zoomed_label
 
-            loss = loss_function(rate, 1 / rate)
+            loss = loss_function(ratio, 1 / ratio)
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
@@ -343,12 +343,12 @@ def main():
                         numbers.append(
                             measure.label(val_labels[i].cpu().numpy()).max()
                         )
-                    number = torch.tensor(numbers, dtype=val_labels.dtype).view(B, 1).to(device) + 1e-1
+                    number = torch.tensor(numbers, dtype=val_labels.dtype).view(B).to(device) + 1e-1
 
                     val_labels = torch.sum(val_labels) / number
 
-                    rate = pred_size / val_labels.view(B)
-                    metric = mse_metric(rate, 1 / rate)
+                    ratio = pred_size / val_labels.view(B)
+                    metric = mse_metric(ratio, 1 / ratio)
 
                     print(os.path.basename(
                         val_data["img_meta_dict"]["filename_or_obj"][0]

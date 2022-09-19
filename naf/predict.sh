@@ -35,4 +35,16 @@
 #python predict_sdf_ls.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/swinunetr_sdf/outputs/ --model_path ./work_dir/swinunetr_sdf/swinunetr_sdf --model_name swinunetr --show_overlay
 
 ############################### grad predict #####################################
-python predict_grad.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/coat_daformer_grad3_s512/outputs_s768/ --model_path ./work_dir/coat_daformer_grad3_s512/coat_daformer_net_grad_grad --model_name coat_daformer_net_grad --show_overlay --input_size 768
+#grad3 use lavzloss but not use direction loss
+#grad2 use all losses
+#grad is the original one
+# grad3
+#python predict_grad.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/coat_daformer_grad3_s512/outputs_s512/ --model_path ./work_dir/coat_daformer_grad3_s512/coat_daformer_net_grad_grad --model_name coat_daformer_net_grad --show_overlay --input_size 512
+# grad2
+#python predict_grad.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/coat_daformer_grad2_s512/outputs_s768/ --model_path ./work_dir/coat_daformer_grad2_s512/coat_daformer_net_grad_grad --model_name coat_daformer_net_grad --show_overlay --input_size 768
+
+## SWA ##
+# this test use epoch 188 0.8466 version
+#python predict_grad.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/coat_daformer_grad3_swa_s512/outputs_s768/ --model_path ./work_dir/coat_daformer_grad_swa_s512/coat_daformer_net_grad_grad --model_name coat_daformer_net_grad --show_overlay --input_size 768
+# this test
+python predict_grad.py -i /media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/TuningSet/  -o ./dev_workspace/coat_daformer_grad3_swa_s512/outputs_s768/ --model_path ./work_dir/coat_daformer_grad_swa_s512/coat_daformer_net_grad_grad --model_name coat_daformer_net_grad --show_overlay --input_size 768

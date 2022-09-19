@@ -10,11 +10,12 @@ import os
 import tqdm
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+from monai.utils import GridSampleMode, GridSamplePadMode
 
 from losses import sim
 from losses.sim import DirectionLoss
 from transformers import flow_gen
-from transformers.utils import CellF1Metric, dx_to_circ, TiffReader2, flow, fig2data, Flow2dTransposeFixd, Flow2dRoatation90Fixd, Flow2dFlipFixd
+from transformers.utils import CellF1Metric, dx_to_circ, TiffReader2, flow, fig2data, Flow2dTransposeFixd, Flow2dRoatation90Fixd, Flow2dFlipFixd, Flow2dRoatateFixd, ColorJitterd
 import monai.networks
 
 
@@ -56,18 +57,20 @@ def main():
     parser.add_argument(
         "--input_size", default=512, type=int, help="input size"
     )
-    parser.add_argument('--continue_train', default=False)
+    parser.add_argument('--continue_train', default=True)
     # parser.add_argument('--model_path', default='./naf/work_dir/', help='path where to save models and segmentation results')
 
     # Training parameters
     parser.add_argument("--batch_size", default=6, type=int, help="Batch size per GPU")
-    parser.add_argument("--max_epochs", default=280, type=int)
+    parser.add_argument("--max_epochs", default=300, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=100, type=int)
     parser.add_argument("--initial_lr", type=float, default=6e-5, help="learning rate")
     parser.add_argument("--amp", type=bool, default=False, help="using amp")
     parser.add_argument("--grad_lambda", type=float, default=1, help="grad hyper-parameter")
-    parser.add_argument("--swa_start_epoch", type=int, default=120)
+    parser.add_argument("--swa_start_epoch", type=int, default=200)
+    parser.add_argument("--swa_lr", type=float, default=6e-4)
+
 
     args = parser.parse_args()
 
@@ -173,8 +176,13 @@ def main():
             # SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
             Flow2dFlipFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
-            RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
-            Flow2dRoatation90Fixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
+
+            # RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
+            # Flow2dRoatation90Fixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
+
+            RandRotated(keys=["img", "label"], range_x=(-3.14, 3.14), range_y=(-3.14, 3.14), prob=0.6, mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST], padding_mode=GridSamplePadMode.ZEROS),
+            Flow2dRoatateFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
+
             # Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
@@ -189,6 +197,7 @@ def main():
                 mode=["area", "nearest"],
                 padding_mode="constant"
             ),
+            ColorJitterd(keys=["img"]),
             EnsureTyped(keys=["img", "label"]),
         ]
     )
@@ -216,6 +225,9 @@ def main():
             # AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
             ScaleIntensityd(keys=["img"], allow_missing_keys=True),
             # AsDiscreted(keys=['label'], to_onehot=3),
+            # ColorJitterd(keys=["img"]),
+            # RandRotated(keys=["img", "label"], range_x=(-3.14, 3.14), range_y=(-3.14, 3.14), prob=0.6, mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST], padding_mode=GridSamplePadMode.ZEROS),
+            # Flow2dRoatateFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
             EnsureTyped(keys=["img", "label"]),
         ]
     )
@@ -283,7 +295,7 @@ def main():
     swa_start = args.swa_start_epoch
 
     scheduler = CosineAnnealingLR(optimizer, T_max=100)
-    swa_scheduler = SWALR(optimizer, swa_lr=0.05, anneal_epochs=80, anneal_strategy="cos")
+    swa_scheduler = SWALR(optimizer, swa_lr=6e-4, anneal_epochs=10, anneal_strategy="cos")
 
     # start a typical PyTorch training
     max_epochs = args.max_epochs
@@ -373,11 +385,7 @@ def main():
         if epoch > swa_start:
             swa_model.update_parameters(model)
             print(f"update SWA({epoch}) ...")
-
             swa_scheduler.step()
-
-        else:
-            scheduler.step()
 
         save_model = swa_model.module if epoch > swa_start else model
 
@@ -393,8 +401,8 @@ def main():
             # SWA update bn
             # The SWA code in the original paper has some issues: only one iter can't move the BatchNorm's running mean and var to current values.
             # so I disable the BN update and copy the running mean and var when SWA Avgmodel update. See the parameter /use_buffers/
-            # torch.optim.swa_utils.update_bn(train_loader, swa_model)
             if epoch > swa_start:
+                # torch.optim.swa_utils.update_bn(train_loader, swa_model)
                 swa_model.eval()
             else:
                 model.eval()
@@ -407,7 +415,7 @@ def main():
                 val_instance_label_board = None
                 val_pred_instance_label_board = None
 
-                for val_step, val_data in enumerate(val_loader, 1):
+                for val_step, val_data in enumerate(val_loader):
                     val_images, val_labels = val_data["img"].to(device), val_data["label"].to(device)
                     # val_images = stain_model(val_images).to(device)
 
@@ -428,15 +436,15 @@ def main():
 
                     pred_grad_cpu = pred_grad.detach().cpu()[0]
                     pred_label_cpu = pred_label.detach().cpu()[0]
-                    pred_label_cpu = torch.argmax(pred_label_cpu, dim=1)
+                    # pred_label_cpu = torch.argmax(pred_label_cpu, dim=1)
 
                     label_grad_cpu = label_grad.detach().cpu()[0]
                     val_grad = dx_to_circ(pred_grad_cpu).transpose(2, 0, 1)[None, ...]
                     val_label_grad = dx_to_circ(label_grad_cpu).transpose(2, 0, 1)[None, ...]
 
                     instance_label, _ = flow_gen.compute_masks(pred_grad_cpu.numpy(),
-                                                               pred_label_cpu.numpy(),
-                                                               cellprob_threshold=0.5, flow_threshold=1.5, use_gpu=True)
+                                                               pred_label_cpu[1].numpy(),
+                                                               cellprob_threshold=0.5, use_gpu=True)
 
                     # numpy.ndarray -> torch.tensor
                     # H x W -> B x C x H x W
@@ -495,8 +503,7 @@ def main():
                 writer.add_scalars("val_metrics", {"f1": f1_metric_, "dice": dice_metric_}, epoch + 1)
 
                 # plot the last model output as GIF image in TensorBoard with the corresponding image and label
-                if val_images_board is not None:
-                    plot_2d_or_3d_image(val_images_board, epoch, writer, index=0, tag="image", max_channels=3)
+                plot_2d_or_3d_image(val_images_board, epoch, writer, index=0, tag="image", max_channels=3)
                 plot_2d_or_3d_image(val_labels_board, epoch, writer, index=0, tag="label")
                 plot_2d_or_3d_image(val_outputs_board, epoch, writer, index=0, tag="output", max_channels=3)
                 plot_2d_or_3d_image(val_grad_board, epoch, writer, index=0, tag="grad", max_channels=3)
