@@ -13,7 +13,7 @@ from scipy.ndimage import binary_dilation
 from skimage.morphology import dilation
 
 import skimage
-from transformers.utils import CellF1Metric, sem2ins_label
+from transforms.utils import CellF1Metric, sem2ins_label
 from monai.transforms import NormalizeIntensityd
 
 from losses.sim import MSEGrad2D
@@ -54,7 +54,7 @@ def main():
 
     from model_selector import model_factory
 
-    from transformers.utils import ConditionChannelNumberd
+    from transforms.utils import ConditionChannelNumberd
     from monai.utils import GridSampleMode
 
     join = os.path.join

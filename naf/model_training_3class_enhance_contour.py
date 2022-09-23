@@ -44,7 +44,7 @@ def main():
 
     from model_selector import model_factory
 
-    from transformers.utils import ConditionChannelNumberd
+    from transforms.utils import ConditionChannelNumberd
     from monai.utils import GridSampleMode
 
     join = os.path.join

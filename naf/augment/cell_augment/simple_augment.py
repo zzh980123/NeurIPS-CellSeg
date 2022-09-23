@@ -5,7 +5,7 @@ import numpy as np
 from monai.data import PILReader
 from monai.transforms import Zoomd, Compose, LoadImaged, SaveImaged, AddChanneld, EnsureChannelFirstd, EnsureTyped
 
-from transformers.utils import ConditionChannelNumberd, CenterCropByPercentd
+from transforms.utils import ConditionChannelNumberd, CenterCropByPercentd
 
 
 def augment_small_cells(images, labels):

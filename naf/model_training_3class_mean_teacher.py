@@ -16,7 +16,7 @@ import training.ramp as ramps
 
 from skimage import measure, morphology
 
-from transformers.utils import CellF1Metric
+from transforms.utils import CellF1Metric
 
 
 def update_ema_variables(model, ema_model, global_step, alpha=0.999):
@@ -78,7 +78,7 @@ def main():
 
     from model_selector import model_factory
 
-    from transformers.utils import ConditionChannelNumberd
+    from transforms.utils import ConditionChannelNumberd
 
     join = os.path.join
 

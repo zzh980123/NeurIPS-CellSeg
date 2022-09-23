@@ -14,8 +14,8 @@ from monai.utils import GridSampleMode, GridSamplePadMode
 
 from losses import sim
 from losses.sim import DirectionLoss
-from transformers import flow_gen
-from transformers.utils import CellF1Metric, dx_to_circ, TiffReader2, flow, fig2data, Flow2dTransposeFixd, Flow2dRoatation90Fixd, Flow2dFlipFixd, Flow2dRoatateFixd, ColorJitterd
+from transforms import flow_gen
+from transforms.utils import CellF1Metric, dx_to_circ, TiffReader2, flow, fig2data, Flow2dTransposeFixd, Flow2dRoatation90Fixd, Flow2dFlipFixd, Flow2dRoatateFixd, ColorJitterd
 import monai.networks
 
 
@@ -76,7 +76,7 @@ def main():
 
     from model_selector import model_factory
 
-    from transformers.utils import ConditionChannelNumberd
+    from transforms.utils import ConditionChannelNumberd
 
     join = os.path.join
 

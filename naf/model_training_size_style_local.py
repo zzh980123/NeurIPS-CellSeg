@@ -14,7 +14,7 @@ from skimage import measure
 import tqdm
 from monai.metrics import MSEMetric
 
-from transformers.utils import LoadJson2Tensor
+from transforms.utils import LoadJson2Tensor
 
 
 def main():
@@ -55,7 +55,7 @@ def main():
 
     from model_selector import model_factory
 
-    from transformers.utils import ConditionChannelNumberd
+    from transforms.utils import ConditionChannelNumberd
 
     join = os.path.join
 

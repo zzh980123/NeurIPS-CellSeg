@@ -1,6 +1,6 @@
 from monai.data import PILReader, PILWriter
 
-import transformers.utils as tra
+import transforms.utils as tra
 from monai.transforms import (
     LoadImaged,
     AddChanneld,

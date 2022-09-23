@@ -3,8 +3,8 @@ import time
 
 from skimage import measure
 
-import transformers
-import transformers.flow_gen as flow
+import transforms
+import transforms.flow_gen as flow
 import tifffile
 import numpy as np
 
@@ -12,7 +12,7 @@ import matplotlib.pyplot as plot
 import tqdm
 import imageio
 
-from transformers.utils import dx_to_circ, fig2data
+from transforms.utils import dx_to_circ, fig2data
 
 if __name__ == '__main__':
     # label_root = '/media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Labeled/labels'
@@ -85,7 +85,7 @@ if __name__ == '__main__':
             # res = np.concatenate([flow_90[:,:, :1], flow_90[:,:, 1:0]], axis=2)
 
 
-            fig, _, _ = transformers.utils.flow([flow_[::32, ::32]], show=True, width=15)
+            fig, _, _ = transforms.utils.flow([flow_[::32, ::32]], show=True, width=15)
 
             # val_grad_board = val_grad
             # label_fig_tensor2 = fig2data(fig)[:, :, :3]

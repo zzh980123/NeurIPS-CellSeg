@@ -2,9 +2,9 @@ import os
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
-from transformers import flow_gen
+from transforms import flow_gen
 
-from transformers.utils import post_process, post_process_2, post_process_3
+from transforms.utils import post_process, post_process_2, post_process_3
 import monai.networks
 
 from model_selector import model_factory
@@ -159,7 +159,7 @@ def main():
             t1 = time.time()
             print(f'Prediction finished: {img_name}; img size = {pre_img_data.shape}; costing: {t1 - t0:.2f}s')
             if args.show_grad:
-                from transformers.utils import dx_to_circ
+                from transforms.utils import dx_to_circ
                 rgb_grad = dx_to_circ(pred_grad_cpu)
                 tif.imwrite(join(output_path, 'overlay_' + img_name.split('.')[0] + '_flow.tiff'), rgb_grad, compression='zlib')
             if args.show_overlay:

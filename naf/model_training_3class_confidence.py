@@ -11,7 +11,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = "3"
 
 from skimage import measure, morphology
 
-from transformers.utils import CellF1Metric
+from transforms.utils import CellF1Metric
 
 
 def main():
@@ -49,7 +49,7 @@ def main():
 
     from model_selector import model_factory
 
-    from transformers.utils import ConditionChannelNumberd
+    from transforms.utils import ConditionChannelNumberd
     from monai.utils import GridSampleMode
 
     join = os.path.join

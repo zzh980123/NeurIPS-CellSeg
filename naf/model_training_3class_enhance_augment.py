@@ -8,7 +8,7 @@ import argparse
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
-from transformers.utils import CellF1Metric
+from transforms.utils import CellF1Metric
 
 from skimage import measure, morphology
 
@@ -50,7 +50,7 @@ def main():
 
     from model_selector import model_factory
 
-    from transformers.utils import ConditionChannelNumberd, RandInversed, RandBrightnessd, RandHueAndSaturationd
+    from transforms.utils import ConditionChannelNumberd, RandInversed, RandBrightnessd, RandHueAndSaturationd
     from monai.utils import GridSampleMode
 
     join = os.path.join

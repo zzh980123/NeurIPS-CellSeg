@@ -1,4 +1,4 @@
-from transformers.utils import swap_fft_lowpass_for, fft_highpass_filter, fft_mask_mag
+from transforms.utils import swap_fft_lowpass_for, fft_highpass_filter, fft_mask_mag
 import tifffile as tif
 import numpy as np
 import cv2

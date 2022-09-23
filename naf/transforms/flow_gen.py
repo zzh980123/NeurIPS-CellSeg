@@ -10,7 +10,7 @@ import numpy as np
 from skimage.morphology import remove_small_holes
 import cv2
 
-from transformers.utils import resize_image
+from transforms.utils import resize_image
 
 torch_GPU = "cuda:0"
 torch_CPU = "cpu"

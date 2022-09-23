@@ -12,7 +12,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 from model_selector import model_factory
 from my_slid_window.sliding_window_inferebce_with_global_info import sliding_window_inference_g
 
-from transformers.utils import ConditionChannelNumberd, FFTFilterd
+from transforms.utils import ConditionChannelNumberd, FFTFilterd
 from monai.utils import GridSampleMode
 
 join = os.path.join

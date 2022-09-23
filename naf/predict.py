@@ -1,7 +1,7 @@
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
-from transformers.utils import post_process, post_process_3
+from transforms.utils import post_process, post_process_3
 
 from model_selector import model_factory
 

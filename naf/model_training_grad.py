@@ -14,8 +14,8 @@ from monai.utils import GridSamplePadMode, GridSampleMode
 
 from losses import sim
 from losses.sim import DirectionLoss
-from transformers import flow_gen
-from transformers.utils import (
+from transforms import flow_gen
+from transforms.utils import (
     CellF1Metric,
     dx_to_circ,
     TiffReader2,
@@ -83,7 +83,7 @@ def main():
 
     from model_selector import model_factory
 
-    from transformers.utils import ConditionChannelNumberd
+    from transforms.utils import ConditionChannelNumberd
 
     join = os.path.join
 

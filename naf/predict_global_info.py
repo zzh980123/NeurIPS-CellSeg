@@ -2,7 +2,7 @@ import os
 
 from model_selector import model_factory
 from my_slid_window.sliding_window_inferebce_with_global_info import sliding_window_inference_g
-from transformers.utils import fft_highpass_filter
+from transforms.utils import fft_highpass_filter
 
 join = os.path.join
 import argparse
