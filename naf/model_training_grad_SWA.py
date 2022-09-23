@@ -47,7 +47,7 @@ def main():
     )
     parser.add_argument("--seed", default=2022, type=int)
     # parser.add_argument("--resume", default=False, help="resume from checkpoint")
-    parser.add_argument("--num_workers", default=8, type=int)
+    parser.add_argument("--num_workers", default=4, type=int)
 
     # Model parameters
     parser.add_argument(

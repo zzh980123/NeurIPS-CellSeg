@@ -502,6 +502,7 @@ class ColorJitterd(MapTransform):
 
         return d
 
+
 class FFTFilterd(MapTransform):
     """
         """
@@ -1108,6 +1109,34 @@ def post_process_2(label, max_size=60 * 60):
         label = grey_dilation(label, size=(iter_ * 2, iter_ * 2))
 
     return label
+
+
+from scipy import ndimage as ndi
+from skimage.segmentation import watershed
+from skimage.feature import peak_local_max
+
+
+def post_process_3(label, min_distance=6, markers=None):
+    # watershed
+    label[label > 0] = 1
+
+    # label = ndi.binary_opening(label, structure=None)
+
+    distance = ndi.distance_transform_edt(label)
+
+    if markers is None:
+        max_coords = peak_local_max(distance, labels=label, min_distance=min_distance,
+                                    footprint=np.ones((2, 2)))
+        local_maxima = np.zeros_like(label, dtype=bool)
+        local_maxima[tuple(max_coords.T)] = True
+        markers = ndi.label(local_maxima)[0]
+
+    label = watershed(-distance, markers=markers, mask=label)
+
+    # label = ndi.grey_opening(label, size=(3,3), footprint=(3, 3))
+
+    return label
+
 
 def three_classes2instance(label):
     label = label > 0

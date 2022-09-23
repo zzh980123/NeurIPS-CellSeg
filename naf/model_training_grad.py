@@ -7,14 +7,25 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
-import tqdm
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+import tqdm
+from monai.utils import GridSamplePadMode, GridSampleMode
 
 from losses import sim
 from losses.sim import DirectionLoss
 from transformers import flow_gen
-from transformers.utils import CellF1Metric, dx_to_circ, TiffReader2, flow, fig2data, Flow2dTransposeFixd, Flow2dRoatation90Fixd, Flow2dFlipFixd
+from transformers.utils import (
+    CellF1Metric,
+    dx_to_circ,
+    TiffReader2,
+    flow,
+    fig2data,
+    Flow2dTransposeFixd,
+    Flow2dRoatation90Fixd,
+    Flow2dFlipFixd,
+    Flow2dRoatateFixd,
+    ColorJitterd)
 import monai.networks
 
 
@@ -172,10 +183,14 @@ def main():
             # SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
             Flow2dFlipFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
-            RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
-            Flow2dRoatation90Fixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
+            # RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
+            # Flow2dRoatation90Fixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
             # Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
+            RandRotated(keys=["img", "label"], range_x=(-3.14, 3.14), range_y=(-3.14, 3.14), prob=0.6, mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST],
+                        padding_mode=GridSamplePadMode.ZEROS),
+            Flow2dRoatateFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
+            ColorJitterd(keys=["img"]),
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
             RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2), sigma_y=(1, 2)),
@@ -329,12 +344,11 @@ def main():
                 pred_label = torch.softmax(pred_label, dim=1)
                 seg_label = labels[:, 1:2]
 
-                loss = 0.8 * ce_dice_loss(pred_label, labels_onehot) + \
-                       0.2 * lovasz_loss(pred_label, seg_label) + \
-                       grad_lambda * mse_loss(pred_grad, label_grad_yx * 5) +\
-                       0.2 * loss_function_3.forward(pred_grad, label_grad_yx)
-
+                loss = ce_dice_loss(pred_label, labels_onehot) + \
+                       grad_lambda * mse_loss(pred_grad, label_grad_yx * 5)
+                       # 0.2 * lovasz_loss(pred_label, seg_label)
                 # + loss_function_3.forward(pred_grad, label_grad_yx)
+                #      0.2 * loss_function_3.forward(pred_grad, label_grad_yx)
 
             if amp and scaler:
                 scaler.scale(loss).backward()

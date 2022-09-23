@@ -1,8 +1,7 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = "3"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
-from transformers.utils import post_process
-
+from transformers.utils import post_process, post_process_3
 
 from model_selector import model_factory
 
@@ -96,8 +95,8 @@ def main():
             test_pred_out = torch.nn.functional.softmax(test_pred_out, dim=1)  # (B, C, H, W)
             test_pred_npy = test_pred_out[0, 1].cpu().numpy()
             # convert probability map to binary mask and apply morphological postprocessing
-            test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(test_pred_npy > 0.5), 16))
-            test_pred_mask = post_process(test_pred_mask)
+            # test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(test_pred_npy > 0.5), 16))
+            test_pred_mask = post_process_3(morphology.remove_small_objects(morphology.remove_small_holes(test_pred_npy > 0.5), 16))
             tif.imwrite(join(output_path, img_name.split('.')[0] + '_label.tiff'), test_pred_mask, compression='zlib')
             t1 = time.time()
             print(f'Prediction finished: {img_name}; img size = {pre_img_data.shape}; costing: {t1 - t0:.2f}s')

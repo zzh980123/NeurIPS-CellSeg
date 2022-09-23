@@ -6,6 +6,7 @@ from models.daformer_coat_net import DaFormaerCoATNet
 from models.daformer_coat_net_doubel_branch import DaFormaerCoATNet_db
 from models.daformer_coat_net_grad import DaFormaerCoATNet_GRAD
 from models.daformer_coat_net_grad_v2 import DaFormaerCoATNet_GRAD_V2
+from models.daformer_coat_net_grad_v3 import DaFormaerCoATNet_GRAD_V3
 
 from models.daformer_coat_net_v2 import DaFormaerCoATNet_v2
 from models.daformer_coat_net_v3 import DaFormaerCoATNet_v3
@@ -205,6 +206,12 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2):
         ).to(device)
     if model_name == "coat_daformer_net_grad_v2":
         model = DaFormaerCoATNet_GRAD_V2(
+            in_channel=in_channels,
+            out_channel=args.num_class,
+            encoder_pretrain='/media/kevin/870A38D039F26F71/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'
+        ).to(device)
+    if model_name == "coat_daformer_net_grad_v3":
+        model = DaFormaerCoATNet_GRAD_V3(
             in_channel=in_channels,
             out_channel=args.num_class,
             encoder_pretrain='/media/kevin/870A38D039F26F71/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'
