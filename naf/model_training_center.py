@@ -7,15 +7,28 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
-import tqdm
+from skimage import measure
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
-from monai.utils import GridSampleMode, GridSamplePadMode
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+
+
+import tqdm
+from monai.utils import GridSamplePadMode, GridSampleMode
 
 from losses import sim
-from losses.sim import DirectionLoss
+from losses.sim import DirectionLoss, GradCenterLoss
 from transforms import flow_gen
-from transforms.utils import CellF1Metric, dx_to_circ, TiffReader2, flow, fig2data, Flow2dTransposeFixd, Flow2dRoatation90Fixd, Flow2dFlipFixd, Flow2dRoatateFixd, ColorJitterd
+from transforms.utils import (
+    CellF1Metric,
+    dx_to_circ,
+    TiffReader2,
+    flow,
+    fig2data,
+    Flow2dTransposeFixd,
+    Flow2dRoatation90Fixd,
+    Flow2dFlipFixd,
+    Flow2dRoatateFixd,
+    ColorJitterd, post_process_3)
 import monai.networks
 
 
@@ -25,11 +38,11 @@ def label2seg_and_grad(labels):
         seg_label, 2
     )
 
-    return labels[:, :1], labels_onehot, labels[:, 2:4]
+    return labels[:, :1], labels_onehot, labels[:, 2:4], labels[:, 1:2]
 
 
-def output2seg_and_grad(outputs):
-    return outputs[:, :2], outputs[:, 2:4]
+def output2seg_and_prob(outputs):
+    return outputs[:, :2], outputs[:, 2:3]
 
 
 def main():
@@ -37,7 +50,7 @@ def main():
     # Dataset parameters
     parser.add_argument(
         "--data_path",
-        default="./data/Train_Pre_grad/",
+        default="./data/Train_Pre_flows_plus/",
         type=str,
         help="training data path; subfolders: images, labels",
     )
@@ -46,29 +59,27 @@ def main():
     )
     parser.add_argument("--seed", default=2022, type=int)
     # parser.add_argument("--resume", default=False, help="resume from checkpoint")
-    parser.add_argument("--num_workers", default=4, type=int)
+    parser.add_argument("--num_workers", default=8, type=int)
 
     # Model parameters
     parser.add_argument(
         "--model_name", default="coat_daformer_net_grad", help="select mode: coat_daformer_net_grad"
     )
-    parser.add_argument("--num_class", default=4, type=int, help="segmentation classes")
+    parser.add_argument("--num_class", default=3, type=int, help="segmentation classes")
     parser.add_argument(
         "--input_size", default=512, type=int, help="input size"
     )
-    parser.add_argument('--continue_train', default=True)
+    parser.add_argument('--continue_train', default=False)
     # parser.add_argument('--model_path', default='./naf/work_dir/', help='path where to save models and segmentation results')
 
     # Training parameters
     parser.add_argument("--batch_size", default=6, type=int, help="Batch size per GPU")
-    parser.add_argument("--max_epochs", default=450, type=int)
+    parser.add_argument("--max_epochs", default=1000, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=100, type=int)
     parser.add_argument("--initial_lr", type=float, default=6e-5, help="learning rate")
-    parser.add_argument("--amp", type=bool, default=False, help="using amp")
-    parser.add_argument("--grad_lambda", type=float, default=1, help="grad hyper-parameter")
-    parser.add_argument("--swa_start_epoch", type=int, default=0)
-    parser.add_argument("--swa_lr", type=float, default=3e-4)
+    parser.add_argument("--amp", type=bool, default=True, help="using amp")
+    parser.add_argument("--center_lambda", type=float, default=5, help="grad hyper-parameter")
 
     args = parser.parse_args()
 
@@ -103,7 +114,9 @@ def main():
         RandGaussianSmoothd,
         RandHistogramShiftd,
         EnsureTyped,
-        EnsureType, EnsureChannelFirstd, RandRotated
+        EnsureType,
+        EnsureChannelFirstd,
+        RandRotated
     )
     from monai.visualize import plot_2d_or_3d_image
     from datetime import datetime
@@ -136,7 +149,7 @@ def main():
     train_indices = indices[val_split:]
     val_indices = indices[:val_split]
 
-    grad_lambda = args.grad_lambda
+    center_lambda = args.center_lambda
 
     train_files = [
         {"img": join(img_path, img_names[i]), "label": join(gt_path, gt_names[i])}
@@ -167,22 +180,23 @@ def main():
             ScaleIntensityd(
                 keys=["img"], allow_missing_keys=True
             ),  # Do not scale label
-            SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
+
+            SpatialPadd(keys=["img", "label"], spatial_size=(args.input_size, args.input_size)),
             RandSpatialCropd(
-                keys=["img", "label"], roi_size=args.input_size, random_size=False
+                keys=["img", "label"], roi_size=(args.input_size, args.input_size), random_size=False
             ),
+
             # SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
             Flow2dFlipFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
-
             # RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
             # Flow2dRoatation90Fixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
-
-            RandRotated(keys=["img", "label"], range_x=(-3.14, 3.14), range_y=(-3.14, 3.14), prob=0.6, mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST], padding_mode=GridSamplePadMode.ZEROS),
-            Flow2dRoatateFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
-
             # Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
+            RandRotated(keys=["img", "label"], range_x=(-3.14, 3.14), range_y=(-3.14, 3.14), prob=0.6, mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST],
+                        padding_mode=GridSamplePadMode.ZEROS),
+            Flow2dRoatateFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
+            ColorJitterd(keys=["img"]),
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
             RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2), sigma_y=(1, 2)),
@@ -195,7 +209,6 @@ def main():
                 mode=["area", "nearest"],
                 padding_mode="constant"
             ),
-            ColorJitterd(keys=["img"]),
             EnsureTyped(keys=["img", "label"]),
         ]
     )
@@ -216,16 +229,8 @@ def main():
             ConditionChannelNumberd(
                 keys=["img"], target_dim=0, channel_num=3, allow_missing_keys=True
             ),
-            # RandAxisFlipd(keys=["img", "label"], prob=1),
-            # Flow2dFlipFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
-            # RandRotate90d(keys=["img", "label"], prob=1, spatial_axes=[0, 1]),
-            # Flow2dRoatation90Fixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
-            # AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
             ScaleIntensityd(keys=["img"], allow_missing_keys=True),
             # AsDiscreted(keys=['label'], to_onehot=3),
-            # ColorJitterd(keys=["img"]),
-            # RandRotated(keys=["img", "label"], range_x=(-3.14, 3.14), range_y=(-3.14, 3.14), prob=0.6, mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST], padding_mode=GridSamplePadMode.ZEROS),
-            # Flow2dRoatateFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
             EnsureTyped(keys=["img", "label"]),
         ]
     )
@@ -269,10 +274,6 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = model_factory(args.model_name.lower(), device, args, in_channels=3)
-
-    from torch.optim.swa_utils import AveragedModel, SWALR
-    from torch.optim.lr_scheduler import CosineAnnealingLR
-
     # from augment.stain_augment.StainNet.models import StainNet
     # stain_model = StainNet()
     # check_point = "./augment/stain_augment/StainNet/checkpoints/aligned_cytopathology_dataset/StainNet-3x0_best_psnr_layer3_ch32.pth"
@@ -285,15 +286,10 @@ def main():
     ce_dice_loss = monai.losses.DiceCELoss().to(device)
     mse_loss = torch.nn.MSELoss().to(device)
     lovasz_loss = sim.LovaszSoftmaxLoss().to(device)
-    # loss_function_3 = DirectionLoss()
-
+    loss_function_3 = DirectionLoss().to(device)
+    # center_loss = GradCenterLoss().to(device)
     initial_lr = args.initial_lr
     optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
-
-    swa_start = args.swa_start_epoch
-
-    scheduler = CosineAnnealingLR(optimizer, T_max=100)
-    swa_scheduler = SWALR(optimizer, swa_lr=args.swa_lr, anneal_epochs=10, anneal_strategy="cos")
 
     # start a typical PyTorch training
     max_epochs = args.max_epochs
@@ -323,8 +319,6 @@ def main():
         if 'eval_metric' in checkpoint:
             best_metric = checkpoint['eval_metric']
 
-    swa_model: AveragedModel = AveragedModel(model, device=device, use_buffers=True)
-
     amp = args.amp
     scaler = None
     if amp:
@@ -336,7 +330,6 @@ def main():
         checkpoint = None
 
         train_bar = tqdm.tqdm(enumerate(train_loader, 1), total=len(train_loader))
-        step = 1
         for step, batch_data in train_bar:
             inputs, labels = batch_data["img"].to(device), batch_data["label"].to(
                 device
@@ -347,21 +340,23 @@ def main():
 
             with torch.cuda.amp.autocast(enabled=amp):
                 outputs = model(inputs)
-                _, labels_onehot, label_grad_yx = label2seg_and_grad(labels)
-                pred_label, pred_grad = output2seg_and_grad(outputs)
+                _, labels_onehot, label_grad_yx, distance_label = label2seg_and_grad(labels)
+                pred_label, pred_prob = output2seg_and_prob(outputs)
                 pred_label = torch.softmax(pred_label, dim=1)
-                seg_label = labels[:, 1:2]
 
-                loss = 0.8 * ce_dice_loss(pred_label, labels_onehot) + \
-                       0.2 * lovasz_loss(pred_label, seg_label) + \
-                       grad_lambda * mse_loss(pred_grad, label_grad_yx * 5)
+                center_label_prob = distance_label
 
+                loss = ce_dice_loss(pred_label, labels_onehot) + \
+                       center_lambda * mse_loss(pred_prob, center_label_prob)
+
+                # 0.2 * lovasz_loss(pred_label, seg_label)
                 # + loss_function_3.forward(pred_grad, label_grad_yx)
+                #      0.2 * loss_function_3.forward(pred_grad, label_grad_yx)
 
             if amp and scaler:
                 scaler.scale(loss).backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1e5)
                 scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1e4)
                 scaler.step(optimizer)
                 scaler.update()
             else:
@@ -378,38 +373,21 @@ def main():
         epoch_loss_values.append(epoch_loss)
         print(f"epoch {epoch} average loss: {epoch_loss:.4f}")
         eval_loss_value = best_metric
-
-        # SWA
-        if epoch > swa_start:
-            swa_model.update_parameters(model)
-            print(f"update SWA({epoch}) ...")
-            swa_scheduler.step()
-
-        save_model = swa_model.module if epoch > swa_start else model
-
         checkpoint = {
             "epoch": epoch,
-            "model_state_dict": save_model.state_dict(),
+            "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": epoch_loss_values,
             "eval_metric": eval_loss_value
         }
-
         if epoch >= 20 and epoch % val_interval == 0:
-            # SWA update bn
-            # The SWA code in the original paper has some issues: only one iter can't move the BatchNorm's running mean and var to current values.
-            # so I disable the BN update and copy the running mean and var when SWA Avgmodel update. See the parameter /use_buffers/
-            if epoch > swa_start:
-                # torch.optim.swa_utils.update_bn(train_loader, swa_model)
-                swa_model.eval()
-            else:
-                model.eval()
+            model.eval()
             with torch.no_grad():
                 val_images_board = None
                 val_labels_board = None
                 val_outputs_board = None
-                val_grad_board = None
-                val_label_grad_board = None
+                val_prob_board = None
+                val_label_prob_board = None
                 val_instance_label_board = None
                 val_pred_instance_label_board = None
 
@@ -417,58 +395,45 @@ def main():
                     val_images, val_labels = val_data["img"].to(device), val_data["label"].to(device)
                     # val_images = stain_model(val_images).to(device)
 
-                    val_instance_label, val_labels_onehot, label_grad = label2seg_and_grad(val_labels)
+                    val_instance_label, val_labels_onehot, label_grad, distance_label = label2seg_and_grad(val_labels)
 
                     roi_size = (args.input_size, args.input_size)
                     sw_batch_size = args.batch_size
 
-                    pred_model = swa_model if epoch > swa_start else model
-
                     val_outputs = sliding_window_inference(
-                        val_images, roi_size, sw_batch_size, pred_model, overlap=0.5, mode="gaussian"
+                        val_images, roi_size, sw_batch_size, model, overlap=0.5, mode="gaussian"
                     )
 
-                    pred_label, pred_grad = output2seg_and_grad(val_outputs)
+                    pred_label, pred_prob = output2seg_and_prob(val_outputs)
 
-                    pred_label = torch.softmax(pred_label, dim=1)
+                    # pred_label = torch.softmax(pred_label, dim=1)
+                    pred_label = torch.argmax(pred_label, dim=1, keepdim=True)
 
-                    pred_grad_cpu = pred_grad.detach().cpu()[0]
+                    pred_prob_cpu = pred_prob.detach().cpu()[0]
                     pred_label_cpu = pred_label.detach().cpu()[0]
-                    # pred_label_cpu = torch.argmax(pred_label_cpu, dim=1)
+                    label_prob_cpu = distance_label[0]
 
-                    label_grad_cpu = label_grad.detach().cpu()[0]
-                    val_grad = dx_to_circ(pred_grad_cpu).transpose(2, 0, 1)[None, ...]
-                    val_label_grad = dx_to_circ(label_grad_cpu).transpose(2, 0, 1)[None, ...]
+                    pred_prob_cpu[pred_prob_cpu > 0.95] = 1
+                    pred_prob_cpu[pred_prob_cpu < 1] = 0
+                    pred_prob_cpu = pred_label_cpu * pred_prob_cpu
+                    markers = measure.label(pred_prob_cpu)
 
-                    instance_label, _ = flow_gen.compute_masks(pred_grad_cpu.numpy(),
-                                                               pred_label_cpu[1].numpy(),
-                                                               cellprob_threshold=0.5, use_gpu=True)
+                    instance_label = post_process_3(pred_label_cpu, markers=markers[0])
 
                     # numpy.ndarray -> torch.tensor
                     # H x W -> B x C x H x W
-                    instance_label = torch.from_numpy(instance_label.astype(np.float32))[None, None, ...]
+                    instance_label = torch.from_numpy(instance_label.astype(np.float32))[None, ...]
                     val_instance_label = val_instance_label.cpu()
 
-                    del pred_grad, label_grad
+                    del pred_prob, label_grad
 
                     if val_step == epoch % len(val_loader):
-                        g_step = max(pred_grad_cpu.shape[1] // 128, 1)
-                        flow_ = pred_grad_cpu[:, ::g_step, ::g_step].numpy() / 2
-
-                        fig, _, _ = flow([flow_.transpose(1, 2, 0)], show=False, width=10)
-                        val_grad_board = val_grad
-                        fig_tensor = fig2data(fig)[:, :, :3].transpose(2, 0, 1)[None, ...]
-
-                        flow_ = label_grad_cpu[:, ::g_step, ::g_step].numpy() * 2
-                        fig, _, _ = flow([flow_.transpose(1, 2, 0)], show=False, width=10)
-                        # val_grad_board = val_grad
-                        label_fig_tensor = fig2data(fig)[:, :, :3].transpose(2, 0, 1)[None, ...]
-
-                        val_outputs = val_grad * (pred_label_cpu[1].numpy() > 0.5)
+                        val_prob_board = pred_prob_cpu
+                        val_outputs = pred_prob_cpu
                         val_images_board = val_images
                         val_labels_board = val_labels
                         val_outputs_board = val_outputs
-                        val_label_grad_board = val_label_grad
+                        val_label_prob_board = label_prob_cpu
                         # val_instance_label_board = val_instance_label
                         # val_pred_instance_label_board = instance_label
 
@@ -489,6 +454,7 @@ def main():
                 if f1_metric_ > best_metric and checkpoint is not None:
                     best_metric = f1_metric_
                     best_metric_epoch = epoch + 1
+                    # torch.save(checkpoint, join(model_path, "best_Dice_model.pth"))
                     checkpoint["eval_metric"] = best_metric
                     torch.save(checkpoint, join(model_path, "best_F1_model.pth"))
                     print("saved new best metric model")
@@ -504,10 +470,10 @@ def main():
                 plot_2d_or_3d_image(val_images_board, epoch, writer, index=0, tag="image", max_channels=3)
                 plot_2d_or_3d_image(val_labels_board, epoch, writer, index=0, tag="label")
                 plot_2d_or_3d_image(val_outputs_board, epoch, writer, index=0, tag="output", max_channels=3)
-                plot_2d_or_3d_image(val_grad_board, epoch, writer, index=0, tag="grad", max_channels=3)
-                plot_2d_or_3d_image(fig_tensor, epoch, writer, index=0, tag="flow", max_channels=3)
-                plot_2d_or_3d_image(label_fig_tensor, epoch, writer, index=0, tag="label_flow", max_channels=3)
-                plot_2d_or_3d_image(val_label_grad_board, epoch, writer, index=0, tag="label_grad", max_channels=3)
+                plot_2d_or_3d_image(val_prob_board, epoch, writer, index=0, tag="prob", max_channels=1)
+                # plot_2d_or_3d_image(fig_tensor, epoch, writer, index=0, tag="flow", max_channels=3)
+                # plot_2d_or_3d_image(label_fig_tensor, epoch, writer, index=0, tag="label_flow", max_channels=3)
+                plot_2d_or_3d_image(val_label_prob_board, epoch, writer, index=0, tag="label_prob", max_channels=1)
 
                 # plot_2d_or_3d_image(val_instance_label_board, epoch, writer, index=0, tag="label_instance")
                 # plot_2d_or_3d_image(val_pred_instance_label_board, epoch, writer, index=0, tag="label_pred_instance")
@@ -521,7 +487,6 @@ def main():
         f"train completed, best_metric: {best_metric:.4f} at epoch: {best_metric_epoch}"
     )
     writer.close()
-
     torch.save(checkpoint, join(model_path, "final_model.pth"))
     np.savez_compressed(
         join(model_path, "train_log.npz"),

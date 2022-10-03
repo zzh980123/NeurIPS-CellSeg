@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from models.layers import DeformableConvLayer, Involution
+from models.layers import DeformableConvLayer, Involution, InvolutionNative
 
 
 class MixUpSample(nn.Module):
@@ -204,6 +204,15 @@ class DaformerDecoder(nn.Module):
         #         in_channel_fold=False
         #     )
 
+        if fuse == 'involution_native':
+            self.fuse = nn.Sequential(
+                nn.Conv2d(len(encoder_dim) * decoder_dim, decoder_dim, 3, padding=1, bias=False),
+                nn.BatchNorm2d(decoder_dim),
+                nn.ReLU(inplace=True),
+                InvolutionNative(decoder_dim, 3, 1),
+                nn.BatchNorm2d(decoder_dim),
+                nn.ReLU(inplace=True)
+            )
         if fuse == 'involution':
             self.fuse = nn.Sequential(
                 nn.Conv2d(len(encoder_dim) * decoder_dim, decoder_dim, 3, padding=1, bias=False),
@@ -237,5 +246,12 @@ class daformer_involution(DaformerDecoder):
     def __init__(self, **kwargs):
         super(daformer_involution, self).__init__(
             fuse='involution',
+            **kwargs
+        )
+
+class daformer_involution_native(DaformerDecoder):
+    def __init__(self, **kwargs):
+        super(daformer_involution_native, self).__init__(
+            fuse='involution_native',
             **kwargs
         )

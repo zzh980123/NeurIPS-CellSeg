@@ -1,5 +1,6 @@
 from models.daformer import *
 from models.coat import *
+from models.layers import PixelShuffleBlock
 
 
 def criterion_aux_loss(logit, mask):
@@ -22,16 +23,22 @@ class RGB(nn.Module):
         return (x - self.mean) / self.std
 
 
-class DaFormaerCoATNet(nn.Module):
+class DaFormaerCoATNet_Center(nn.Module):
 
     def __init__(self,
                  in_channel=3,
-                 out_channel=3,
+                 out_channel=4,
                  encoder=coat_lite_medium,
                  encoder_pretrain='coat_lite_medium_384x384_f9129688.pth',
-                 decoder=daformer_conv3x3,
+                 decoder=daformer_involution_native,
                  decoder_dim=320):
-        super(DaFormaerCoATNet, self).__init__()
+        super(DaFormaerCoATNet_Center, self).__init__()
+
+        assert out_channel > 2
+        # channel0: inside prob
+        # channel1: outside prob
+        # channel2: center probability 0-1
+
 
         self.rgb = RGB()
 
@@ -44,22 +51,38 @@ class DaFormaerCoATNet(nn.Module):
             decoder_dim=decoder_dim,
         )
         self.logit = nn.Sequential(
-            nn.Conv2d(decoder_dim, out_channel, kernel_size=1),
+            nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
+            nn.BatchNorm2d(decoder_dim),
+            PixelShuffleBlock(decoder_dim, out_channel - 2, upscale_factor=4),
+            nn.BatchNorm2d(out_channel - 2),
         )
+        self.center_prob_conv = nn.Sequential(
+            nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
+            nn.BatchNorm2d(decoder_dim),
+            PixelShuffleBlock(decoder_dim, 2, upscale_factor=4),
+            nn.BatchNorm2d(2)
+        )
+
+        # self.conv = nn.Sequential(
+        #     Conv2dBnReLU(in_channel=in_channel, out_channel=decoder_dim, kernel_size=5, padding=2, stride=1),
+        #     Conv2dBnReLU(in_channel=decoder_dim, out_channel=decoder_dim, kernel_size=5, padding=2, stride=1),
+        #     Conv2dBnReLU(in_channel=decoder_dim, out_channel=out_channel, kernel_size=5, padding=2, stride=1),
+        # )
 
         # try to load the pretrained model of CoAT
         if encoder_pretrain is not None:
             checkpoint = torch.load(encoder_pretrain, map_location=lambda storage, loc: storage)
             self.encoder.load_state_dict(checkpoint['model'], strict=False)
 
-    def forward(self, x, ):
+    def forward(self, x):
         x = self.rgb(x)
         encode_info = self.encoder(x)
 
         last, decode_info = self.decoder(encode_info)
 
         logit = self.logit(last)
+        center_prob = F.sigmoid(self.center_prob_conv(last))
 
-        upsample_logit = F.interpolate(logit, size=None, scale_factor=4, mode='bilinear', align_corners=False)
+        out = torch.cat([logit, center_prob], dim=1)
 
-        return upsample_logit
+        return out

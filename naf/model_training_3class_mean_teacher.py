@@ -9,6 +9,9 @@ import copy
 import os
 import tqdm
 
+# not used
+from training.datasets.mt_datasets import DualStreamDataset
+
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 from monai.transforms import allow_missing_keys_mode
@@ -26,12 +29,12 @@ def update_ema_variables(model, ema_model, global_step, alpha=0.999):
         ema_param.data.mul_(alpha).add_(1 - alpha, param.data)
 
 
-def get_current_consistency_weight(epoch):
+def get_current_consistency_weight(epoch, rampup_length=5):
     # default parameters
     # --consistency 100.0
     # --consistency-rampup 5
     # Consistency ramp-up from https://arxiv.org/abs/1610.02242
-    return 100 * ramps.sigmoid_rampup(epoch, 5)
+    return 100 * ramps.sigmoid_rampup(epoch, rampup_length)
 
 
 def main():
@@ -245,7 +248,7 @@ def main():
             RandRotate90d(keys=["img"], prob=1, spatial_axes=(1, 2), allow_missing_keys=True),
             RandGaussianNoised(keys=["img"], prob=1, mean=0, std=0.1, allow_missing_keys=True),
             RandAdjustContrastd(keys=["img"], prob=1, gamma=(1, 2), allow_missing_keys=True),
-            # EnsureTyped(keys=["img"], allow_missing_keys=True),
+            EnsureTyped(keys=["img"], allow_missing_keys=True),
         ]
     )
 
@@ -262,18 +265,13 @@ def main():
     )
 
     # %% create a training data loader
-    labeled_train_ds = monai.data.Dataset(data=labeled_img_names, transform=train_transforms)
-    unlabeled_train_ds = monai.data.Dataset(data=unlabeled_img_names, transform=train_transforms)
+    # labeled_train_ds = monai.data.Dataset(data=labeled_img_names, transform=train_transforms)
+
+    mt_train_ds = DualStreamDataset(labeled_dataset=labeled_img_names, unlabeled_dataset=unlabeled_img_names, weak_aug_transforms=mean_teacher_transforms, strong_aug_transforms=train_transforms)
+
     # use batch_size=2 to load images and use RandCropByPosNegLabeld to generate 2 x 4 images for network training
-    labeled_train_loader = DataLoader(
-        labeled_train_ds,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=torch.cuda.is_available(),
-    )
-    unlabeled_train_loader = DataLoader(
-        labeled_train_ds,
+    train_loader = DataLoader(
+        mt_train_ds,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
@@ -299,7 +297,7 @@ def main():
     student_model = model_factory(args.model_name.lower(), device, args, in_channels=3)
     teacher_model = copy.deepcopy(student_model)
 
-    loss_function = monai.losses.DiceCELoss(softmax=True, ce_weight=torch.tensor([0.2, 0.3, 0.5]).to(device))
+    loss_function = monai.losses.DiceCELoss(softmax=True)
     consistency_function = torch.nn.MSELoss()
 
     initial_lr = args.initial_lr
@@ -331,9 +329,9 @@ def main():
     for epoch in range(1, max_epochs):
         student_model.train()
         epoch_loss = 0
-        train_bar = tqdm.tqdm(enumerate(labeled_train_loader, 1), total=len(labeled_train_loader))
-        train_bar2 = tqdm.tqdm(enumerate(unlabeled_train_loader, 1), total=len(unlabeled_train_loader))
-        for (step, labeled_batch_data), (step, unlabeled_batch_data) in zip(train_bar, train_bar2):
+        train_bar = tqdm.tqdm(enumerate(mt_train_ds), total=len(mt_train_ds))
+        # train_bar2 = tqdm.tqdm(enumerate(unlabeled_train_loader, 1), total=len(unlabeled_train_loader))
+        for step, labeled_batch_data in train_bar:
 
             labels = labeled_batch_data["label"].to(device)
             inputs = labeled_batch_data["img"].to(device)
@@ -368,7 +366,7 @@ def main():
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
-            epoch_len = len(labeled_train_ds) // labeled_train_loader.batch_size
+            epoch_len = len(mt_train_ds) // train_loader.batch_size
 
             train_bar.set_postfix_str(f"train_loss: {loss.item():.4f}")
             writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)
@@ -392,7 +390,7 @@ def main():
                 val_images = None
                 val_labels = None
                 val_outputs = None
-                val_bar = tqdm.tqdm(enumerate(val_loader, 1), total=len(labeled_train_loader))
+                val_bar = tqdm.tqdm(enumerate(val_loader), total=len(mt_train_ds))
 
                 for val_data in val_bar:
                     val_images, val_labels = val_data["img"].to(device), val_data[

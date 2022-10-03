@@ -16,7 +16,7 @@ torch_GPU = "cuda:0"
 torch_CPU = "cpu"
 
 """
-Obtained from cellpose
+Obtained from CellPose
 """
 
 
@@ -275,12 +275,12 @@ def masks_to_flows(masks, use_gpu=False, device=None):
         return mu
     elif masks.ndim == 2:
         mu, mu_c = masks_to_flows_device(masks, device=device)
-        return mu
+        return mu, mu_c
 
     else:
         raise ValueError('masks_to_flows only takes 2D or 3D arrays')
 
-
+# modified to 2D flow only. Since cneter distance is valid when the input label is 2D.
 def labels_to_flows(labels, files=None, use_gpu=False, device=None, redo_flows=False):
     """ convert labels (list of masks or flows) to flows for training model
     if files is not None, flows are saved to files to be reused
@@ -309,7 +309,7 @@ def labels_to_flows(labels, files=None, use_gpu=False, device=None, redo_flows=F
         veci = [masks_to_flows(labels[n][0], use_gpu=use_gpu, device=device) for n in range(nimg)]
 
         # concatenate labels, distance transform, vector flows, heat (boundary and mask are computed in augmentations)
-        flows = [np.concatenate((labels[n], labels[n] > 0.5, veci[n]), axis=0).astype(np.float32)
+        flows = [np.concatenate((labels[n], veci[n][1][None,], veci[n][0], labels[n] > 0.5), axis=0).astype(np.float32)
                  for n in range(nimg)]
         if files is not None:
             for flow, file in zip(flows, files):
@@ -551,7 +551,7 @@ def flow_error(maski, dP_net, use_gpu=False, device=None):
         return
 
     # flows predicted from estimated masks
-    dP_masks = masks_to_flows(maski, use_gpu=use_gpu, device=device)
+    dP_masks = masks_to_flows(maski, use_gpu=use_gpu, device=device)[0]
     # difference between predicted flows vs mask flows
     flow_errors = np.zeros(maski.max())
     for i in range(dP_masks.shape[0]):

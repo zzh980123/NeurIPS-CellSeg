@@ -191,10 +191,11 @@ class LoadJson2Tensor(MapTransform):
 
 class TiffReader2(ImageReader):
 
-    def __init__(self, channel_dim: Optional[int] = None, **kwargs):
+    def __init__(self, channel_dim: Optional[int] = None, transpose=False, **kwargs):
         super().__init__()
         self.channel_dim = channel_dim
         self.kwargs = kwargs
+        self.transpose = transpose
 
     def verify_suffix(self, filename: Union[Sequence[PathLike], PathLike]) -> bool:
         """
@@ -227,9 +228,10 @@ class TiffReader2(ImageReader):
         for name in filenames:
             # we transpose the width dimension and height dimension...
             # if the label has vector-field, it is needed to fix the direction of the flows
-            img = tifffile.imread(name, **kwargs_).transpose(0, 2, 1)
+            img = tifffile.imread(name, **kwargs_)
+            if self.transpose:
+                img = img.transpose(0, 2, 1)
             img_.append(img)
-
         return img_ if len(img_) > 1 else img_[0]
 
     def get_data(self, img) -> Tuple[np.ndarray, Dict]:
@@ -1116,9 +1118,9 @@ from skimage.segmentation import watershed
 from skimage.feature import peak_local_max
 
 
-def post_process_3(label, min_distance=6, markers=None):
+def post_process_3(label, min_distance=6, cell_prob=0.5, markers=None):
     # watershed
-    label[label > 0] = 1
+    label[cell_prob > 0.5] = 1
 
     # label = ndi.binary_opening(label, structure=None)
 

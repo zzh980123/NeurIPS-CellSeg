@@ -1,5 +1,6 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
 from transforms.utils import post_process, post_process_3
 
@@ -65,7 +66,6 @@ def main():
     # print(torch.cuda.memory_summary())
     # torch.cuda.set_per_process_memory_fraction(0.5, 0)
 
-
     with torch.no_grad():
         for img_name in img_names:
             # torch.cuda.empty_cache()
@@ -91,12 +91,12 @@ def main():
             t0 = time.time()
             test_npy01 = pre_img_data / np.max(pre_img_data)
             test_tensor = torch.from_numpy(np.expand_dims(test_npy01, 0)).permute(0, 3, 1, 2).type(torch.FloatTensor).to(device)
-            test_pred_out = sliding_window_inference(test_tensor, roi_size, sw_batch_size, model, overlap=0.5, padding_mode="replicate")
+            test_pred_out = sliding_window_inference(test_tensor, roi_size, sw_batch_size, model, overlap=0.5, padding_mode="replicate", mode="gaussian", sigma_scale=0.08)
             test_pred_out = torch.nn.functional.softmax(test_pred_out, dim=1)  # (B, C, H, W)
             test_pred_npy = test_pred_out[0, 1].cpu().numpy()
             # convert probability map to binary mask and apply morphological postprocessing
-            # test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(test_pred_npy > 0.5), 16))
-            test_pred_mask = post_process_3(morphology.remove_small_objects(morphology.remove_small_holes(test_pred_npy > 0.5), 16))
+            test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(test_pred_npy > 0.6), 16), connectivity=1)
+
             tif.imwrite(join(output_path, img_name.split('.')[0] + '_label.tiff'), test_pred_mask, compression='zlib')
             t1 = time.time()
             print(f'Prediction finished: {img_name}; img size = {pre_img_data.shape}; costing: {t1 - t0:.2f}s')

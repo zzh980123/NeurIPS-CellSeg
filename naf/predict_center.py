@@ -19,17 +19,17 @@ from skimage import io, segmentation, morphology, measure, exposure
 import tifffile as tif
 
 
-def label2seg_and_grad(labels):
-    seg_label = labels[:, 1:2]
-    seg_label[seg_label > 0] = 1
+def label2seg_and_center_prob(labels):
+    seg_label = labels[:, 4:]
+    # seg_label[seg_label > 0] = 1
     labels_onehot = monai.networks.one_hot(
         seg_label, 2
     )
 
-    return labels[:, :1], labels_onehot, labels[:, 2:]
+    return labels[:, :1], labels_onehot, labels[:, 1:2]
 
 
-def output2seg_and_grad(outputs):
+def output2seg_and_center_prob(outputs):
     return outputs[:, :2], outputs[:, 2:]
 
 
@@ -56,8 +56,6 @@ def main():
     parser.add_argument('--model_name', default='swinunetrv2', help='select mode: unet, unetr, swinunetr，swinunetrv2')
     parser.add_argument('--num_class', default=4, type=int, help='segmentation classes')
     parser.add_argument('--input_size', default=512, type=int, help='segmentation classes')
-    parser.add_argument('--watershed', required=False, default=False, action="store_true")
-
     args = parser.parse_args()
 
     input_path = args.input_path
@@ -114,49 +112,32 @@ def main():
             test_pred_out = sliding_window_inference(test_tensor, roi_size, sw_batch_size, model, mode="gaussian",
                                                      overlap=0.5)
 
-            pred_label, pred_grad = output2seg_and_grad(test_pred_out)
+            pred_label, pred_cent_prob = output2seg_and_center_prob(test_pred_out)
 
             # pred_label = torch.softmax(pred_label, dim=1)
-            pred_label[0, 1] += 0.1
+
             pred_label = torch.argmax(pred_label, dim=1)  # (B, C, H, W)
-            pred_grad_cpu = pred_grad.detach().cpu()[0].numpy()
+            pred_cent_prob_cpu = pred_cent_prob.detach().cpu()[0].numpy()
             pred_label_cpu = pred_label.detach().cpu()[0].numpy()
             # pred_label_cpu[pred_label_cpu > 0.5] = 1
             # label_grad_cpu = label_grad.detach().cpu()[0]
-            pred_grad_cpu = pred_grad_cpu / (np.sqrt(pred_grad_cpu[:1] ** 2 + pred_grad_cpu[1:] ** 2) + 1e-5) * 5
+            pred_cent_prob_cpu[pred_cent_prob_cpu > 0.9] = 1
+            pred_cent_prob_cpu[pred_cent_prob_cpu <= 0.9] = 0
 
-            if pred_grad_cpu.shape[2] <= 6000 and pred_grad_cpu.shape[1] <= 6000:
+            if pred_cent_prob_cpu.shape[2] <= 6000 and pred_cent_prob_cpu.shape[1] <= 6000:
                 # test_pred_mask[test_pred_mask > 0] = 1
                 # test_pred_mask = post_process_3(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu >= 0.5), 16))
-                if args.watershed:
-                    # 74.87
-                    markers, _ = flow_gen.compute_masks(pred_grad_cpu,
-                                                        pred_label_cpu,
-                                                        cellprob_threshold=0.5, flow_threshold=1.6, niter=3, use_gpu=True, min_size=2)
 
-                    # markers, _ = flow_gen.compute_masks(pred_grad_cpu,
-                    #                                            pred_label_cpu,
-                    #                                            cellprob_threshold=0.5, flow_threshold=1e9, niter=3, use_gpu=True, min_size=1)
-
-                    #
-                    # test_pred_mask, _ = flow_gen.compute_masks(pred_grad_cpu,
-                    #                                            pred_label_cpu,
-                    #                                            cellprob_threshold=0.5, use_gpu=True)
-
-                    if markers.max() == 0:
-                        markers = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.6), 16), connectivity=1)
-                    test_pred_mask = post_process_3(label=pred_label_cpu, cell_prob=0.6, markers=markers)
+                if pred_cent_prob_cpu.max() == 0:
+                    test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.5), 16))
                 else:
-                    test_pred_mask, _ = flow_gen.compute_masks(pred_grad_cpu,
-                                           pred_label_cpu,
-                                           cellprob_threshold=0.5, flow_threshold=10, niter=800, use_gpu=True, min_size=16)
-                    if test_pred_mask.max() == 0:
-                        test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.5), 16), connectivity=1)
+                    test_pred_mask = post_process_3(label=pred_label_cpu, cell_prob=0.5, markers=pred_cent_prob_cpu)
+
             else:
-                # test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.5), 16), connectivity=1)
-                test_pred_mask, _ = flow_gen.compute_masks(pred_grad_cpu,
-                                                           pred_label_cpu,
-                                                           cellprob_threshold=0.5, flow_threshold=2, niter=200, use_gpu=False, min_size=16)
+                test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.5), 16))
+                # test_pred_mask, _ = flow_gen.compute_masks(pred_cent_prob_cpu,
+                #                                            pred_label_cpu,
+                #                                            cellprob_threshold=0.5, flow_threshold=1.6, niter=200, use_gpu=False, min_size=16)
 
                 # test_pred_mask = post_process_3(morphology.remove_small_objects(morphology.remove_small_holes(test_pred_mask >= 0.5), 16))
             # test_pred_mask = post_process_2(test_pred_mask, max_size=70 * 70 * 4)
@@ -171,7 +152,7 @@ def main():
             print(f'Prediction finished: {img_name}; img size = {pre_img_data.shape}; costing: {t1 - t0:.2f}s')
             if args.show_grad:
                 from transforms.utils import dx_to_circ
-                rgb_grad = dx_to_circ(pred_grad_cpu)
+                rgb_grad = dx_to_circ(pred_cent_prob_cpu)
                 tif.imwrite(join(output_path, 'overlay_' + img_name.split('.')[0] + '_flow.tiff'), rgb_grad, compression='zlib')
             if args.show_overlay:
                 boundary = segmentation.find_boundaries(test_pred_mask, connectivity=1, mode='inner')

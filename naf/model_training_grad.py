@@ -7,7 +7,7 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 import tqdm
 from monai.utils import GridSamplePadMode, GridSampleMode
@@ -30,17 +30,16 @@ import monai.networks
 
 
 def label2seg_and_grad(labels):
-    seg_label = labels[:, 1:2]
-    seg_label[seg_label > 0] = 1
+    seg_label = labels[:, 4:5]
     labels_onehot = monai.networks.one_hot(
         seg_label, 2
     )
 
-    return labels[:, :1], labels_onehot, labels[:, 2:]
+    return labels[:, :1], labels_onehot, labels[:, 2:4]
 
 
 def output2seg_and_grad(outputs):
-    return outputs[:, :2], outputs[:, 2:]
+    return outputs[:, :2], outputs[:, 2:4]
 
 
 def main():
@@ -112,7 +111,7 @@ def main():
         RandGaussianSmoothd,
         RandHistogramShiftd,
         EnsureTyped,
-        EnsureType, EnsureChannelFirstd, RandRotated
+        EnsureType, EnsureChannelFirstd, RandRotated, RandScaleIntensityd
     )
     from monai.visualize import plot_2d_or_3d_image
     from datetime import datetime
@@ -191,10 +190,12 @@ def main():
                         padding_mode=GridSamplePadMode.ZEROS),
             Flow2dRoatateFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
             ColorJitterd(keys=["img"]),
+            RandScaleIntensityd(keys=["img"], prob=0.25, factors=0.1),
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
             RandGaussianSmoothd(keys=["img"], prob=0.25, sigma_x=(1, 2), sigma_y=(1, 2)),
             RandHistogramShiftd(keys=["img"], prob=0.25, num_control_points=3),
+
             RandZoomd(
                 keys=["img", "label"],
                 prob=0.5,
@@ -223,13 +224,7 @@ def main():
             ConditionChannelNumberd(
                 keys=["img"], target_dim=0, channel_num=3, allow_missing_keys=True
             ),
-            # RandAxisFlipd(keys=["img", "label"], prob=1),
-            # Flow2dFlipFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
-            # RandRotate90d(keys=["img", "label"], prob=1, spatial_axes=[0, 1]),
-            # Flow2dRoatation90Fixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
-            # AsChannelFirstd(keys=["img"], channel_dim=-1, allow_missing_keys=True),
             ScaleIntensityd(keys=["img"], allow_missing_keys=True),
-            # AsDiscreted(keys=['label'], to_onehot=3),
             EnsureTyped(keys=["img", "label"]),
         ]
     )
