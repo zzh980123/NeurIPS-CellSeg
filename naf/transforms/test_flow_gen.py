@@ -27,6 +27,11 @@ if __name__ == '__main__':
     flow_files = [f.replace(label_root, flow_root) for f in files]
 
     for f, ff in tqdm.tqdm(zip(files, flow_files), total=len(files)):
+        # # fixed wrong label from official
+        # if "00686" not in f:
+        #     continue
+        # else:
+        #     print("Fixed")
         if is_3classes:
             classes_3 = imageio.imread_v2(f)
             # to two classes
@@ -42,6 +47,7 @@ if __name__ == '__main__':
         # semi-segment label/channel 4
         res = flow.labels_to_flows([instance], [ff], use_gpu=False, device="cuda:3")
 
+        # # visual result
         # for s in res:
         #     grad_yx = s[2:4, :, :]
         #     im = dx_to_circ(grad_yx)

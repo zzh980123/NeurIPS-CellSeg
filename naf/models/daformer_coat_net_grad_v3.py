@@ -74,11 +74,30 @@ class DaFormaerCoATNet_GRAD_V3(nn.Module):
             checkpoint = torch.load(encoder_pretrain, map_location=lambda storage, loc: storage)
             self.encoder.load_state_dict(checkpoint['model'], strict=False)
 
-    def forward(self, x):
+        self.output_latent = False
+
+    def output_latent_enable(self, enable=True):
+        self.output_latent = enable
+
+    def forward(self, x, noise=0.0):
+        encode_info = self.encode(x)
+        # add noise for VAT
+        encode_info[-1] = encode_info[-1] + noise
+        out = self.decode(encode_info)
+
+        if self.output_latent:
+            return out, encode_info
+
+        return out
+
+    def encode(self, x):
         x = self.rgb(x)
         encode_info = self.encoder(x)
+        return encode_info
 
-        last, decode_info = self.decoder(encode_info)
+    def decode(self, latent):
+
+        last, decode_info = self.decoder(latent)
 
         logit = self.logit(last)
         grads = self.grad_conv(last)

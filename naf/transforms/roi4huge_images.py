@@ -33,6 +33,7 @@ random.seed(2022)
 
 import tifffile
 import tqdm
+
 if __name__ == '__main__':
     path = '/media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Unlabeled/release-part2-whole-slide'
     image_paths = glob.glob(os.path.join(path, "*"))
@@ -47,7 +48,7 @@ if __name__ == '__main__':
         for i in tqdm.trange(sample_num):
             roi_image = rsc(cf(image)) / 65535 * 255
             # print(roi_image.max(), roi_image.min())
-            save_ = SaveImage(output_dir=f"./results/{name}", output_ext=".png", output_postfix=f"roi_{i}", writer=PILWriter,separate_folder=False)
+            save_ = SaveImage(output_dir=f"./results/{name}", output_ext=".png", output_postfix=f"roi_{i}", writer=PILWriter, separate_folder=False)
             save_(roi_image)
 
     image_paths = glob.glob(f"./results/**/*roi*.png", recursive=True)
@@ -55,10 +56,7 @@ if __name__ == '__main__':
     start_idx = 1713
 
     import shutil
+
     for i, image_path in tqdm.tqdm(enumerate(image_paths), total=len(image_paths)):
         idx = "%05d" % (start_idx + i)
         shutil.copy(image_path, f"../../data/Train_Pre_Unlabeled/unlabeled_cell_{idx}.png")
-
-
-
-

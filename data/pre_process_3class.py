@@ -80,7 +80,9 @@ def main():
     os.makedirs(pre_gt_path, exist_ok=True)
 
     for img_name, gt_name in zip(tqdm(img_names), gt_names):
-
+        # # fixed wrong label from offical
+        # if "00686" not in img_name:
+        #     continue
         save_img = join(target_path, 'images', img_name.split('.')[0] + '.png')
         if os.path.exists(save_img):
             continue

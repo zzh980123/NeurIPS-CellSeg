@@ -193,3 +193,4 @@ cython_debug/
 将删除 naf/misc/swap_img_01.tiff
 将删除 naf/misc/swap_img_1.png
 将删除 naf/transformers/results/
+!/naf/transforms/results/

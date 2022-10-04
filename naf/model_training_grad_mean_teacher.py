@@ -8,7 +8,7 @@ import argparse
 import copy
 import itertools
 import os
-
+import matplotlib.pyplot as plt
 os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
 import monai
@@ -71,7 +71,9 @@ def get_current_consistency_weight(epoch, rampup_length):
     # --consistency 100.0
     # --consistency-rampup 5
     # Consistency ramp-up from https://arxiv.org/abs/1610.02242
-    return 100 * ramps.sigmoid_rampup(epoch, rampup_length)
+    res = ramps.sigmoid_rampup(epoch, rampup_length)
+    print(f"current consistency weight: {res} at epoch {epoch}")
+    return res
 
 
 def main():
@@ -117,6 +119,10 @@ def main():
     parser.add_argument("--alpha", type=float, default=0.999, help="ema")
     parser.add_argument("--confidence_threshold", type=float, default=0.6, help="ema")
     parser.add_argument("--grad_lambda", type=float, default=1, help="grad hyper-parameter")
+    parser.add_argument("--vat", required=False, default=False, action="store_true", help="T-VAT enable or not")
+    parser.add_argument("--eva_use_student", required=False, default=False, action="store_true", help="eval using student model or not")
+    parser.add_argument("--finetune", required=False, default=False, action="store_true", help="finetune will not record the resume checkpoint best val score")
+    parser.add_argument("--consistence_w", type=float, required=False, default=1, help="consistence weight")
 
     args = parser.parse_args()
 
@@ -188,13 +194,6 @@ def main():
     val_indices = indices[:val_split]
 
     unlabeled_train_indices = np.arange(unlabeled_img_num)
-
-    # combined_img_num = img_num - val_split + unlabeled_img_num
-    # np.random.shuffle(indices)
-    # combined_train_indices = np.arange(combined_img_num)
-
-    # val_indices = np.arange(val_split)
-    # train_combined_indices = np.arange(img_num - val_split)
 
     train_labeled_files = [
         {"img": join(img_path, labeled_img_names[i]), "label": join(gt_path, gt_names[i])}
@@ -302,10 +301,14 @@ def main():
         torch.max(check_data["label"]),
     )
 
-    # %% create a training data loader
-    # labeled_train_ds = monai.data.Dataset(data=labeled_img_names, transform=train_transforms)
+    del check_ds
+    del check_loader
+    del check_data
 
-    mt_train_ds = DualStreamDataset(labeled_dataset=train_labeled_files, unlabeled_dataset=train_unlabeled_files, weak_aug_transforms=at,
+    # %% create a training data loader
+    debug_spilt = -1
+
+    mt_train_ds = DualStreamDataset(labeled_dataset=train_labeled_files[:debug_spilt], unlabeled_dataset=train_unlabeled_files[:debug_spilt], weak_aug_transforms=at,
                                     strong_aug_transforms=train_transforms)
 
     # use batch_size=2 to load images and use RandCropByPosNegLabeld to generate 2 x 4 images for network training
@@ -314,13 +317,12 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=torch.cuda.is_available(),
+        pin_memory=torch.cuda.is_available(), drop_last=True
     )
 
     # create a validation data loader
-    val_ds = monai.data.Dataset(data=val_files, transform=val_transforms)
+    val_ds = monai.data.Dataset(data=val_files, transform=val_transforms, )
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=1)
-
     dice_metric = DiceMetric(
         include_background=False, reduction="mean", get_not_nans=False
     )
@@ -367,14 +369,14 @@ def main():
         # load model parameters
         checkpoint = torch.load(load_model_path, map_location=torch.device(device))
         student_model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer = torch.optim.AdamW(student_model.parameters(), initial_lr)
+        optimizer = torch.optim.AdamW(student_model.parameters(), initial_lr, eps=1e-4)
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         optimizer.param_groups[0]['capturable'] = True
         restart_epoch = checkpoint['epoch']
         history_loss = checkpoint['loss']
         epoch_loss_values.append(history_loss)
         best_metric_epoch = restart_epoch
-        if 'eval_metric' in checkpoint:
+        if 'eval_metric' in checkpoint and not args.finetune:
             best_metric = checkpoint['eval_metric']
 
     ########### mean teacher train process #############
@@ -384,16 +386,24 @@ def main():
     #  unlabeled images are sampled.
     ####################################################
 
+    from torch.cuda.amp import GradScaler
+    scaler = GradScaler()
+
     teacher_model = copy.deepcopy(student_model)
-    teacher_model.eval()
+    teacher_model.train()
+
+    if args.vat:
+        teacher_model.output_latent_enable()
 
     for epoch in range(restart_epoch, max_epochs):
         student_model.train()
+        teacher_model.train()
         epoch_loss = 0
         train_bar = tqdm.tqdm(enumerate(train_loader), total=len(train_loader))
-        beta = get_current_consistency_weight(epoch, max(0, 200 - restart_epoch)) / 100
+        consistence_w = get_current_consistency_weight(epoch, 200) * args.consistence_w
 
         for step, batch_data in train_bar:
+
             labels = batch_data["label"].to(device)
             lb_img = batch_data["img"].to(device)
 
@@ -401,26 +411,46 @@ def main():
             ul_img = batch_data["ul_img"].to(device)
 
             optimizer.zero_grad()
-            pred_lb_img = student_model(lb_img)
-            pred_ul_img = student_model(waul_img)
 
-            with torch.no_grad():
-                p_label = teacher_model(ul_img)
+            noise = 0
+            if args.vat:
+                with torch.no_grad():
+                    latent = teacher_model.encode(waul_img)
+                p_label = teacher_model.decode(latent)
+
+                logits = torch.flatten(p_label, start_dim=1, end_dim=-1)
+                noise = sim.get_vat_noise(teacher_model, latent[-1], logits)
+
+            else:
+                with torch.no_grad():
+                    p_label = teacher_model(ul_img).clone().detach()
+
+            imgs = torch.cat([lb_img, waul_img])
+            latent = student_model.encode(imgs)
+
+            pred_img = student_model.decode(latent)
+
+            adv_loss = 0
+            if args.vat:
+                latent[-1] = latent[-1] + noise
+                adv_pred_img = student_model.decode(latent)
+                adv_loss = sim.kl(torch.flatten(pred_img, start_dim=1), torch.flatten(adv_pred_img, start_dim=1), reduction="mean")
+
+            pred_lb_img, pred_ul_img = pred_img[:args.batch_size], pred_img[args.batch_size:]
 
             pred_mask, pred_grad = output2seg_and_grad(pred_lb_img)
-            label_mask, labels_onehot, label_grad = label2seg_and_grad(labels)
+            _, labels_onehot, label_grad = label2seg_and_grad(labels)
 
             pred_ul_mask, pred_ul_grad = output2seg_and_grad(pred_ul_img)
             p_label_mask, p_label_grad = output2seg_and_grad(p_label)
 
-            normal_p_label_mask = torch.softmax(p_label_mask, dim=1)
-            confidence = normal_p_label_mask[:, 1:].clone().detach()
-            # confidence[confidence < confidence_threshold] = 0
-            # confidence[confidence > confidence_threshold] = 1
-            loss = ((consistency_function_seg(pred_ul_mask, p_label_mask, threshold=confidence_threshold)[0] +
-                     grad_lambda * consistency_function_grad.loss(p_label_grad, pred_ul_grad, confidence > confidence_threshold)) * beta +
-                    (sup_loss_function_seg(pred_mask, labels_onehot) +
-                     grad_lambda * sup_loss_function_grad.loss(label_grad, pred_grad))) / (1 + beta)
+            conf_ce_loss, _, _, conf = consistency_function_seg(pred_ul_mask, p_label_mask, threshold=confidence_threshold)
+            consistency_loss = (conf_ce_loss +
+                                grad_lambda * consistency_function_grad.loss(p_label_grad, pred_ul_grad, 1)) * consistence_w
+            sup_loss = (sup_loss_function_seg(pred_mask, labels_onehot) +
+                        grad_lambda * sup_loss_function_grad.loss(label_grad * 5, pred_grad))
+
+            loss = (consistency_loss + sup_loss + adv_loss) / (1 + consistence_w)
 
             loss.backward()
             optimizer.step()
@@ -439,15 +469,18 @@ def main():
         epoch_loss /= step
         epoch_loss_values.append(epoch_loss)
         print(f"epoch {epoch} average loss: {epoch_loss:.4f}")
+
+        eval_model = student_model if args.eva_use_student else teacher_model
+
         checkpoint = {
             "epoch": epoch,
-            "model_state_dict": student_model.state_dict(),
+            "model_state_dict": eval_model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": epoch_loss_values,
         }
 
         if epoch >= 20 and epoch % val_interval == 0:
-            student_model.eval()
+            eval_model.eval()
             with torch.no_grad():
                 val_images_board = None
                 val_labels_board = None
@@ -467,7 +500,7 @@ def main():
                     sw_batch_size = args.batch_size
 
                     val_outputs = sliding_window_inference(
-                        val_images, roi_size, sw_batch_size, student_model, overlap=0.5, mode="gaussian"
+                        val_images, roi_size, sw_batch_size, eval_model, overlap=0.5, mode="gaussian"
                     )
 
                     pred_label, pred_grad = output2seg_and_grad(val_outputs)
@@ -503,6 +536,7 @@ def main():
                         fig, _, _ = flow([flow_.transpose(1, 2, 0)], show=False, width=10)
                         # val_grad_board = val_grad
                         label_fig_tensor = fig2data(fig)[:, :, :3].transpose(2, 0, 1)[None, ...]
+                        plt.close('all')
 
                         val_outputs = val_grad * (pred_label_cpu[1].numpy() > 0.5)
                         val_images_board = val_images

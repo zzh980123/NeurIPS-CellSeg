@@ -251,7 +251,7 @@ def semi_ce_loss(inputs, targets,
             neg_prediction_prob = torch.clamp(1 - F.softmax(inputs, dim=1), min=1e-7, max=1.)
             negative_loss_mat = -(neg_label * torch.log(neg_prediction_prob))
             zero = torch.tensor(0., dtype=torch.float, device=negative_loss_mat.device)
-            return zero, pass_rate, negative_loss_mat[mask_neg].mean()
+            return zero, pass_rate, negative_loss_mat[mask_neg].mean(), weight * mask
         else:
             positive_loss_mat = F.cross_entropy(inputs, torch.argmax(targets, dim=1), reduction="none")
             positive_loss_mat = positive_loss_mat * weight
@@ -259,7 +259,7 @@ def semi_ce_loss(inputs, targets,
             neg_prediction_prob = torch.clamp(1 - F.softmax(inputs, dim=1), min=1e-7, max=1.)
             negative_loss_mat = -(neg_label * torch.log(neg_prediction_prob))
 
-            return positive_loss_mat[mask].mean(), pass_rate, negative_loss_mat[mask_neg].mean()
+            return positive_loss_mat[mask].mean(), pass_rate, negative_loss_mat[mask_neg].mean(), weight * mask
     else:
         raise NotImplementedError
 
@@ -561,6 +561,95 @@ def mean(l, ignore_nan=False, empty=0):
     if n == 1:
         return acc
     return acc / n
+
+
+def kl(inputs, targets, reduction="sum"):
+    """
+
+    @param inputs: logits
+    @param targets: logits
+    @param reduction: ...
+    @return:
+    """
+    loss = F.kl_div(F.log_softmax(inputs, dim=-1), F.softmax(targets, dim=-1), reduction=reduction)
+
+    return loss
+
+
+def adv_project(grad, norm_type="inf", eps=1e-6):
+    """
+    Get the direction of grad by normalize of L1 L2 L0
+    @param grad: The grad of tensor
+    @param norm_type: 
+    @param eps: 
+    @return: 
+    """
+    if norm_type == "l2":
+        direction = grad / (torch.norm(grad, dim=-1, keepdim=True) + eps)
+    elif norm_type == "l1":
+        direction = grad.sign()
+    else:
+        direction = grad / (grad.abs().max(-1, keepdim=True)[0] + eps)
+
+    return direction
+
+
+def virtual_adversarial_training(decoder, hidden_status, logits, step=1e-3):
+    embed: torch.FloatTensor = hidden_status
+
+    noise = embed.data.new(embed.size()).normal_(0, 1) * 1e-5
+    noise.requires_grad_()
+
+    new_embed = embed.data.detach() + noise
+    adv_output = decoder.decode(new_embed).reshape(logits.shape)
+
+    adv_loss = kl(adv_output, logits)
+
+    # calculate the max grad direction
+    delta_grad, _ = torch.autograd.grad(adv_loss, noise, only_inputs=True)
+
+    norm = delta_grad.norm()
+
+    if torch.isnan(norm) or torch.isinf(norm):
+        return 0
+
+    noise = noise + delta_grad * step
+
+    noise = adv_project(noise, norm_type="l2", eps=1e-6)
+
+    # add the noise
+    new_embed = embed.data.detach() + noise
+
+    adv_output = decoder.decode(new_embed).reshape(logits.shape)
+
+    return kl(adv_output, logits.detach())
+
+
+def get_vat_noise(decoder, hidden_status, logits, step=1e-3):
+    embed: torch.FloatTensor = hidden_status
+
+    noise = embed.data.new(embed.size()).normal_(0, 1) * 1e-5
+    noise.requires_grad_()
+
+    new_embed = embed.data.detach() + noise
+    adv_output = decoder.decode(new_embed).reshape(logits.shape)
+
+    adv_loss = kl(adv_output, logits)
+
+    # calculate the max grad direction
+    delta_grad, _ = torch.autograd.grad(adv_loss, noise, only_inputs=True)
+
+    norm = delta_grad.norm()
+
+    if torch.isnan(norm) or torch.isinf(norm):
+        return 0
+
+    noise = noise + delta_grad * step
+
+    noise = adv_project(noise, norm_type="l2", eps=1e-6)
+
+    return noise
+
 
 
 if __name__ == '__main__':
