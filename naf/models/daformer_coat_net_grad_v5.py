@@ -45,13 +45,13 @@ class DaFormaerCoATNet_GRAD_V5(nn.Module):
 
         self.encoder = encoder(in_channels=in_channel)
 
-        encoder_dim = self.encoder.embed_dims
+        encoder_dims = self.encoder.embed_dims
 
         self.class_encoder = nn.Sequential(
-            Conv2dBnReLU(encoder_dim[-1], encoder_dim[-1] // 2),
+            Conv2dBnReLU(encoder_dims[-1], encoder_dims[-1]),
             nn.AdaptiveAvgPool2d(1),
             # cell images has 4 modalities
-            nn.Conv2d(in_channels=encoder_dim[-1] // 2, out_channels=classes_num, kernel_size=1),
+            nn.Conv2d(in_channels=encoder_dims[-1], out_channels=classes_num, kernel_size=1),
             nn.BatchNorm2d(classes_num),
             nn.LeakyReLU(inplace=True)
         )
@@ -62,7 +62,7 @@ class DaFormaerCoATNet_GRAD_V5(nn.Module):
             decoder_dim
         )
         self.decoder = decoder(
-            encoder_dim=encoder_dim,
+            encoder_dim=encoder_dims,
             decoder_dim=decoder_dim,
         )
         self.logit = nn.Sequential(

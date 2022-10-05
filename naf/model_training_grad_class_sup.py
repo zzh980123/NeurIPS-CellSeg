@@ -293,7 +293,7 @@ def main():
     # stain_model.requires_grad_(False)
     restart_epoch = 1
 
-    ce_dice_loss = monai.losses.DiceCELoss().to(device)
+    ce_dice_loss = monai.losses.DiceCELoss(softmax=True).to(device)
     mse_loss = torch.nn.MSELoss().to(device)
     class_loss = torch.nn.CrossEntropyLoss()
     # lovasz_loss = sim.LovaszSoftmaxLoss().to(device)
@@ -342,10 +342,10 @@ def main():
 
         train_bar = tqdm.tqdm(enumerate(train_loader), total=len(train_loader))
         for step, batch_data in train_bar:
-            inputs, labels, class_onehot_label = batch_data["img"].to(device), batch_data["label"].to(
+            inputs, labels, class_label = batch_data["img"].to(device), batch_data["label"].to(
                 device
             ), batch_data["class_label"].to(device)
-            class_onehot_label = monai.networks.one_hot(class_onehot_label, args.cell_classes)
+            class_onehot_label = monai.networks.one_hot(class_label, args.cell_classes)
 
             optimizer.zero_grad()
             # inputs = stain_model(inputs).to(device)
@@ -354,7 +354,6 @@ def main():
                 outputs, class_code = model(inputs, class_sup=True)
                 _, labels_onehot, label_grad_yx = label2seg_and_grad(labels)
                 pred_label, pred_grad = output2seg_and_grad(outputs)
-                pred_label = torch.softmax(pred_label, dim=1)
 
                 loss = ce_dice_loss(pred_label, labels_onehot) + \
                        grad_lambda * mse_loss(pred_grad, label_grad_yx * 5) + \
@@ -362,6 +361,7 @@ def main():
                 # 0.2 * lovasz_loss(pred_label, seg_label)
                 # + loss_function_3.forward(pred_grad, label_grad_yx)
                 #      0.2 * loss_function_3.forward(pred_grad, label_grad_yx)
+            del class_label, label_grad, labels_onehot
 
             if amp and scaler:
                 scaler.scale(loss).backward()
@@ -374,7 +374,7 @@ def main():
                 optimizer.step()
 
             epoch_loss += loss.item()
-            epoch_len = len(train_ds) // train_loader.batch_size
+            epoch_len = len(train_loader)
 
             train_bar.set_postfix_str(f"train_loss: {loss.item():.4f}")
             writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)

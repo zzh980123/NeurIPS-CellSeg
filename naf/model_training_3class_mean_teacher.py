@@ -15,10 +15,8 @@ import copy
 import os
 import tqdm
 
-# not used
-from training.datasets.mt_datasets import DualStreamDataset
-
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+from training.datasets.mt_datasets import DualStreamDataset
 
 from monai.transforms import allow_missing_keys_mode
 import training.ramp as ramps

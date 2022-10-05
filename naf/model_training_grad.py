@@ -277,7 +277,7 @@ def main():
     restart_epoch = 1
 
     # loss_function = monai.losses.DiceCELoss(softmax=True).to(device)
-    ce_dice_loss = monai.losses.DiceCELoss().to(device)
+    ce_dice_loss = monai.losses.DiceCELoss(softmax=True).to(device)
     mse_loss = torch.nn.MSELoss().to(device)
     lovasz_loss = sim.LovaszSoftmaxLoss().to(device)
     loss_function_3 = DirectionLoss().to(device)
@@ -336,8 +336,8 @@ def main():
                 outputs = model(inputs)
                 _, labels_onehot, label_grad_yx = label2seg_and_grad(labels)
                 pred_label, pred_grad = output2seg_and_grad(outputs)
-                pred_label = torch.softmax(pred_label, dim=1)
-                seg_label = labels[:, 1:2]
+                # pred_label = torch.softmax(pred_label, dim=1)
+                # seg_label = labels[:, 1:2]
 
                 loss = ce_dice_loss(pred_label, labels_onehot) + \
                        grad_lambda * mse_loss(pred_grad, label_grad_yx * 5)

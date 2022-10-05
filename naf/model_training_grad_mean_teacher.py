@@ -123,6 +123,8 @@ def main():
     parser.add_argument("--eva_use_student", required=False, default=False, action="store_true", help="eval using student model or not")
     parser.add_argument("--finetune", required=False, default=False, action="store_true", help="finetune will not record the resume checkpoint best val score")
     parser.add_argument("--consistence_w", type=float, required=False, default=1, help="consistence weight")
+    parser.add_argument("--rampup_length", type=int, required=False, default=60, help="rampup length")
+    parser.add_argument("--lb_consistence", type=int, required=False, default=0, help="labeled image consistence loss: enable->1, disable->0")
 
     args = parser.parse_args()
 
@@ -400,7 +402,7 @@ def main():
         teacher_model.train()
         epoch_loss = 0
         train_bar = tqdm.tqdm(enumerate(train_loader), total=len(train_loader))
-        consistence_w = get_current_consistency_weight(epoch, 200) * args.consistence_w
+        consistence_w = get_current_consistency_weight(epoch, args.rampup_length) * args.consistence_w
 
         for step, batch_data in train_bar:
 
@@ -424,6 +426,8 @@ def main():
             else:
                 with torch.no_grad():
                     p_label = teacher_model(ul_img).clone().detach()
+                    # add consistence
+                    t_lb_label = teacher_model(lb_img).clone().detach()
 
             imgs = torch.cat([lb_img, waul_img])
             latent = student_model.encode(imgs)
@@ -444,13 +448,20 @@ def main():
             pred_ul_mask, pred_ul_grad = output2seg_and_grad(pred_ul_img)
             p_label_mask, p_label_grad = output2seg_and_grad(p_label)
 
-            conf_ce_loss, _, _, conf = consistency_function_seg(pred_ul_mask, p_label_mask, threshold=confidence_threshold)
-            consistency_loss = (conf_ce_loss +
-                                grad_lambda * consistency_function_grad.loss(p_label_grad, pred_ul_grad, 1)) * consistence_w
-            sup_loss = (sup_loss_function_seg(pred_mask, labels_onehot) +
-                        grad_lambda * sup_loss_function_grad.loss(label_grad * 5, pred_grad))
+            t_label_mask, t_label_grad = output2seg_and_grad(t_lb_label)
 
-            loss = (consistency_loss + sup_loss + adv_loss) / (1 + consistence_w)
+            conf_ce_loss, _, _, conf = consistency_function_seg(pred_ul_mask, p_label_mask, threshold=confidence_threshold)
+            consistency_loss = (conf_ce_loss + grad_lambda * consistency_function_grad.loss(p_label_grad, pred_ul_grad, 1)) * consistence_w
+            consistency_loss_2 = 0
+
+            # test
+            if args.lb_consisitence > 0:
+                conf_ce_loss_2, _, _, conf = consistency_function_seg(pred_mask, t_label_mask, threshold=confidence_threshold)
+                consistency_loss_2 = (conf_ce_loss_2 + grad_lambda * consistency_function_grad.loss(t_label_grad, pred_grad, 1)) * consistence_w
+
+            sup_loss = sup_loss_function_seg(pred_mask, labels_onehot) + grad_lambda * sup_loss_function_grad.loss(label_grad * 5, pred_grad)
+
+            loss = (consistency_loss + consistency_loss_2) + sup_loss + adv_loss
 
             loss.backward()
             optimizer.step()
