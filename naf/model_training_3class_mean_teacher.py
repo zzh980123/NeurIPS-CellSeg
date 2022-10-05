@@ -4,6 +4,12 @@
 Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/main/2d_segmentation/torch
 """
 
+
+"""
+Don't use the codes.
+Many bugs not fixed :(
+"""
+
 import argparse
 import copy
 import os
@@ -329,7 +335,7 @@ def main():
     for epoch in range(1, max_epochs):
         student_model.train()
         epoch_loss = 0
-        train_bar = tqdm.tqdm(enumerate(mt_train_ds), total=len(mt_train_ds))
+        train_bar = tqdm.tqdm(enumerate(train_loader), total=len(train_loader))
         # train_bar2 = tqdm.tqdm(enumerate(unlabeled_train_loader, 1), total=len(unlabeled_train_loader))
         for step, labeled_batch_data in train_bar:
 
@@ -366,7 +372,7 @@ def main():
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
-            epoch_len = len(mt_train_ds) // train_loader.batch_size
+            epoch_len = len(train_loader)
 
             train_bar.set_postfix_str(f"train_loss: {loss.item():.4f}")
             writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)
