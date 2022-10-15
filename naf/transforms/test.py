@@ -15,7 +15,7 @@ from monai.transforms import (
 test_bright = tra.RandBrightnessd(keys=["img"], allow_missing_keys=True, prob=1, add=(-50, 50))
 test_hue = tra.RandHueAndSaturationd(keys=["img"], allow_missing_keys=True, prob=1, add=(-100, 100))
 test_inverse = tra.RandInversed(keys=["img"], prob=1)
-test_mixcut = tra.RandCutoutd(keys=['img'], prob=1)
+test_cutout = tra.RandCutoutd(keys=['img'], prob=1)
 
 if __name__ == '__main__':
     image_test = "./datas/cell_00028.png"
@@ -77,12 +77,12 @@ if __name__ == '__main__':
         ]
     )
 
-    mixcut_transformers = Compose(
+    cutout_transformers = Compose(
         [
             LoadImaged(keys=["img"], reader=PILReader),
             AsChannelFirstd(keys=["img"], allow_missing_keys=True),
-            test_mixcut,
-            SaveImaged(keys=["img"], output_dir="./results", output_ext=".png", output_postfix="mixcut", writer=PILWriter)
+            test_cutout,
+            SaveImaged(keys=["img"], output_dir="./results", output_ext=".png", output_postfix="cutout", writer=PILWriter)
         ]
     )
 
@@ -102,7 +102,7 @@ if __name__ == '__main__':
     res1 = brightness_transformers({"img": image_test})
     res2 = hue_transformers({"img": image_test})
     res3 = inverse_transformers({"img": image_test})
-    res4 = mixcut_transformers({"img": image_test})
+    res4 = cutout_transformers({"img": image_test})
 
     # fixed_aug_inputs = mean_teacher_transforms(inputs)
     #

@@ -10,7 +10,7 @@ import itertools
 import os
 import matplotlib.pyplot as plt
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 import monai
 import tqdm
@@ -369,6 +369,15 @@ def main():
 
     alpha = args.alpha
 
+    # VAT for our grad regression and segmentation
+    def model_predictor(new_latent, logits):
+        pred_img = student_model.decode(new_latent)
+        (pred_mask, pred_grad), (adv_pred_mask, adv_pred_grad) = output2seg_and_grad(pred_img), output2seg_and_grad(logits)
+        adv_loss = sim.kl(torch.flatten(pred_mask, start_dim=1), torch.flatten(adv_pred_mask, start_dim=1), reduction="mean")
+        adv_loss = adv_loss + grad_lambda * torch.nn.functional.mse_loss(pred_grad, adv_pred_grad)
+
+        return adv_loss
+
     if args.continue_train:
         load_model_path = join(model_path, 'best_F1_model.pth')
         if not os.path.exists(load_model_path):
@@ -378,6 +387,7 @@ def main():
         student_model.load_state_dict(checkpoint['model_state_dict'])
         optimizer = torch.optim.AdamW(student_model.parameters(), initial_lr, eps=1e-4)
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        # torch bug... see github issues
         optimizer.param_groups[0]['capturable'] = True
         restart_epoch = checkpoint['epoch']
         history_loss = checkpoint['loss']
@@ -426,17 +436,16 @@ def main():
                 with torch.no_grad():
                     latent = teacher_model.encode(ul_img)
                 p_label = teacher_model.decode(latent)
+                # mask the label from teacher model
 
-                logits = torch.flatten(p_label, start_dim=1, end_dim=-1)
-                # calculate the noise (of the latent) by forward the decoder of the model
-                noise = sim.get_vat_noise(teacher_model, latent[-1], logits)
+                p_label = cut_mask * p_label
+                # calculate the noise (of the latent) by forward the decoder of the model and statistic the grad direction of the latent.
+                noise = sim.get_vat_noise(model_predictor, latent[-1], p_label)
 
             else:
                 with torch.no_grad():
                     p_label = teacher_model(ul_img).clone().detach()
-
-            # mask the label from teacher model
-            p_label = cut_mask * p_label
+                p_label = cut_mask * p_label
 
             imgs = torch.cat([lb_img, waul_img])
             latent = student_model.encode(imgs)
@@ -444,11 +453,18 @@ def main():
             pred_img = student_model.decode(latent)
 
             adv_loss = 0
+
             if args.vat:
                 # apply the addition noise
                 latent[-1] = latent[-1] + noise
-                adv_pred_img = student_model.decode(latent)
-                adv_loss = sim.kl(torch.flatten(pred_img, start_dim=1), torch.flatten(adv_pred_img, start_dim=1), reduction="mean")
+
+                # minimum the distance of the noised latent and the original latent by the predictor(decoder) outputs.
+                # the noise is obtained from teacher model virtual training not student's.
+                adv_loss = model_predictor(latent[-1].detach(), p_label)
+                # adv_pred_img = student_model.decode(latent)
+                # (pred_mask, pred_grad), (adv_pred_mask, adv_pred_grad) = output2seg_and_grad(pred_img),  output2seg_and_grad(adv_pred_img)
+                # adv_loss = sim.kl(torch.flatten(pred_mask, start_dim=1), torch.flatten(adv_pred_mask, start_dim=1), reduction="mean")
+                # adv_loss = adv_loss + grad_lambda * torch.nn.functional.mse_loss(pred_grad, adv_pred_grad)
 
             pred_lb_img, pred_ul_img = pred_img[:args.batch_size], pred_img[args.batch_size:]
 

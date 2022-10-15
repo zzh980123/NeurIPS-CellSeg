@@ -594,6 +594,7 @@ def adv_project(grad, norm_type="inf", eps=1e-6):
     return direction
 
 
+# example of the classify task
 def virtual_adversarial_training(decoder, hidden_status, logits, step=1e-3):
     embed: torch.FloatTensor = hidden_status
 
@@ -625,16 +626,17 @@ def virtual_adversarial_training(decoder, hidden_status, logits, step=1e-3):
     return kl(adv_output, logits.detach())
 
 
-def get_vat_noise(decoder, hidden_status, logits, step=1e-3):
+def get_vat_noise(decoder_predictor, hidden_status, logits, step=1e-3):
     embed: torch.FloatTensor = hidden_status
     # create a noise by sampling from normal distribution
     noise = embed.data.new(embed.size()).normal_(0, 1) * 1e-5
     noise.requires_grad_()
 
     new_embed = embed.data.detach() + noise
-    adv_output = decoder.decode(new_embed).reshape(logits.shape)
+    # adv_output = decoder.decode(new_embed).reshape(logits.shape)
 
-    adv_loss = kl(adv_output, logits)
+    adv_loss = decoder_predictor(new_embed, logits)
+    # kl(adv_output, logits)
 
     # calculate the grad direction
     delta_grad, _ = torch.autograd.grad(adv_loss, noise, only_inputs=True)
