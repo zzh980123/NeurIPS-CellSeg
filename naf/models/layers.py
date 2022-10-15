@@ -1,3 +1,5 @@
+from typing import Union
+
 import torch.nn as nn
 import torch
 from monai.networks.layers import DropPath, trunc_normal_, Conv, Pool, get_act_layer, get_norm_layer
@@ -137,6 +139,44 @@ class DeformableConvLayer(nn.Module):
             out += f
 
         return self.conv(out + x)
+
+
+class DSConv2d(nn.Module):
+    def __init__(self,
+                 in_channel,
+                 out_channel,
+                 kernel_size,
+                 stride=1,
+                 padding: Union[str, int, tuple] = 0,
+                 dilation=1
+                 ):
+        super().__init__()
+
+        self.dconv = nn.Sequential(
+            nn.Conv2d(in_channels=in_channel, out_channels=in_channel, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, groups=in_channel),
+            nn.Conv2d(in_channel, out_channel, kernel_size=1, stride=1, padding=0),
+        )
+
+    def forward(self, x):
+        x = self.dconv(x)
+        return x
+
+
+class HugeConv2dBlock(nn.Module):
+
+    def __init__(self, in_channel, out_channel, kernel_size=(31, 31), small_ks=5):
+        super().__init__()
+        self.w, self.h = kernel_size
+        self.conv0 = DSConv2d(in_channel, out_channel, (self.w, small_ks), padding="same")
+        self.conv1 = DSConv2d(in_channel, out_channel, (small_ks, self.h), padding="same")
+        self.sconv = nn.Conv2d(in_channel, out_channel, (small_ks, small_ks), padding="same")
+
+    def forward(self, x):
+        main_path = self.conv0(x)
+        main_path = main_path + self.conv1(x)
+        path = self.sconv(x)
+
+        return path + main_path
 
 
 ######################## SubConv ########################
@@ -469,7 +509,7 @@ class InvolutionNative(nn.Module):
     def forward(self, x):
         weight = self.conv2(self.conv1(x if self.stride == 1 else self.avgpool(x)))
         b, c, h, w = weight.shape
-        weight = weight.view(b, self.groups, self.kernel_size**2, h, w).unsqueeze(2)
-        out = self.unfold(x).view(b, self.groups, self.group_channels, self.kernel_size**2, h, w)
+        weight = weight.view(b, self.groups, self.kernel_size ** 2, h, w).unsqueeze(2)
+        out = self.unfold(x).view(b, self.groups, self.group_channels, self.kernel_size ** 2, h, w)
         out = (weight * out).sum(dim=3).view(b, self.channels, h, w)
         return out

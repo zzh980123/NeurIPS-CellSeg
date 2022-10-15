@@ -1,6 +1,6 @@
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
 
 from transforms import flow_gen
 
@@ -54,7 +54,7 @@ def main():
 
     # Model parameters
     parser.add_argument('--model_name', default='swinunetrv2', help='select mode: unet, unetr, swinunetr，swinunetrv2')
-    parser.add_argument('--num_class', default=4, type=int, help='segmentation classes')
+    parser.add_argument('--num_class', default=3, type=int, help='segmentation classes')
     parser.add_argument('--input_size', default=512, type=int, help='segmentation classes')
     args = parser.parse_args()
 
@@ -121,8 +121,8 @@ def main():
             pred_label_cpu = pred_label.detach().cpu()[0].numpy()
             # pred_label_cpu[pred_label_cpu > 0.5] = 1
             # label_grad_cpu = label_grad.detach().cpu()[0]
-            pred_cent_prob_cpu[pred_cent_prob_cpu > 0.9] = 1
-            pred_cent_prob_cpu[pred_cent_prob_cpu <= 0.9] = 0
+            pred_cent_prob_cpu[pred_cent_prob_cpu > 0.95] = 1
+            pred_cent_prob_cpu[pred_cent_prob_cpu <= 0.95] = 0
 
             if pred_cent_prob_cpu.shape[2] <= 6000 and pred_cent_prob_cpu.shape[1] <= 6000:
                 # test_pred_mask[test_pred_mask > 0] = 1
@@ -131,7 +131,7 @@ def main():
                 if pred_cent_prob_cpu.max() == 0:
                     test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.5), 16))
                 else:
-                    test_pred_mask = post_process_3(label=pred_label_cpu, cell_prob=0.5, markers=pred_cent_prob_cpu)
+                    test_pred_mask = post_process_3(label=pred_label_cpu, cell_prob=0.5, markers=measure.label(pred_cent_prob_cpu[0], connectivity=1))
 
             else:
                 test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.5), 16))

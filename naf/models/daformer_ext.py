@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from models.layers import DeformableConvLayer
+from models.layers import DeformableConvLayer, HugeConv2dBlock
 
 
 class MixUpSample(nn.Module):
@@ -201,6 +201,12 @@ class DaformerDecoder(nn.Module):
                 # nn.Conv3d(2, 1, (4, 1, 1), padding=(2, 0, 0), stride=(1, 1, 1), bias=False, padding_mode='reflect'),
                 nn.BatchNorm3d(decoder_dim),
                 nn.ReLU(inplace=True),
+            )
+
+        if fuse == 'huge-conv':
+            self.fuse = nn.Sequential(
+                HugeConv2dBlock(decoder_dim, decoder_dim, kernel_size=(31, 31)),
+                nn.ReLU(inplace=True)
             )
 
         # if fuse == 'dfc_v5':

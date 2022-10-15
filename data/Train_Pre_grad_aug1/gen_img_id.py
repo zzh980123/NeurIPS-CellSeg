@@ -6,10 +6,10 @@ if __name__ == '__main__':
     images.sort()
     names = {}
     """
-    0: HE Bright Filed
-    1: DCF
-    2: yingguang
-    3: xiangwei
+    0: Bright Filed
+    1: DIC
+    2: PC
+    3: Fluorescent 
     """
 
 
@@ -18,13 +18,13 @@ if __name__ == '__main__':
 
 
     def rules(idx):
-        if 12 >= idx >= 0 or 15 <= idx <= 141 or 145 <= idx <= 230 or 2000 <= idx <= 2011 or idx >= 2014:
+        if 1 <= idx <= 300 or 1000 <= idx < 1126 or idx >= 2000:
             return 0
-        elif 301 <= idx <= 527 or 530 <= idx <= 546 or 559 <= idx <= 718 or 1114 <= idx < 1137:
+        elif 301 <= idx <= 500:
             return 1
-        elif 719 <= idx <= 1000:
+        elif 501 <= idx <= 700 or 1001 <= idx <= 1073:
             return 2
-        else:
+        elif 701 <= idx <= 1000 or 1126 <= idx <= 1137 or 1074 <= idx <= 1113:
             return 3
 
 

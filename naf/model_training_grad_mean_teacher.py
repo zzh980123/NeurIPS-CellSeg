@@ -9,10 +9,12 @@ import copy
 import itertools
 import os
 import matplotlib.pyplot as plt
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
 import monai
 import tqdm
+import numpy as np
 
 # not used
 from monai.utils import GridSamplePadMode, GridSampleMode
@@ -24,7 +26,7 @@ from transforms import flow_gen
 from monai.transforms import RandScaleIntensityd, RandRotated
 import training.ramp as ramps
 
-from transforms.utils import CellF1Metric, ColorJitterd, dx_to_circ, flow, fig2data, Flow2dTransposeFixd, TiffReader2, Flow2dRoatateFixd, Flow2dFlipFixd
+from transforms.utils import CellF1Metric, ColorJitterd, dx_to_circ, flow, fig2data, Flow2dTransposeFixd, TiffReader2, Flow2dRoatateFixd, Flow2dFlipFixd, RandCutoutd
 
 
 def label2seg_and_grad(labels):
@@ -110,19 +112,20 @@ def main():
     )
 
     parser.add_argument('--continue_train', required=False, default=False, action="store_true")
+    parser.add_argument('--val_spilt_fraction', required=False, type=float, default=0.1)
     # Training parameters
     parser.add_argument("--batch_size", default=2, type=int, help="Batch size per GPU")
     parser.add_argument("--max_epochs", default=500, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=100, type=int)
-    parser.add_argument("--initial_lr", type=float, default=6e-5, help="learning rate")
+    parser.add_argument("--initial_lr", type=float, default=3e-5, help="learning rate")
     parser.add_argument("--alpha", type=float, default=0.999, help="ema")
-    parser.add_argument("--confidence_threshold", type=float, default=0.6, help="ema")
+    parser.add_argument("--confidence_threshold", type=float, default=0.7, help="ema")
     parser.add_argument("--grad_lambda", type=float, default=1, help="grad hyper-parameter")
     parser.add_argument("--vat", required=False, default=False, action="store_true", help="T-VAT enable or not")
     parser.add_argument("--eva_use_student", required=False, default=False, action="store_true", help="eval using student model or not")
     parser.add_argument("--finetune", required=False, default=False, action="store_true", help="finetune will not record the resume checkpoint best val score")
-    parser.add_argument("--consistence_w", type=float, required=False, default=1, help="consistence weight")
+    parser.add_argument("--consistence_w", type=float, required=False, default=0.4, help="consistence weight")
     parser.add_argument("--rampup_length", type=int, required=False, default=60, help="rampup length")
     parser.add_argument("--lb_consistence", type=int, required=False, default=0, help="labeled image consistence loss: enable->1, disable->0")
 
@@ -187,7 +190,7 @@ def main():
     img_num = len(labeled_img_names)
     unlabeled_img_num = len(unlabeled_img_names)
 
-    val_frac = 0.1
+    val_frac = args.val_spilt_fraction
 
     val_split = int(img_num * val_frac)
     indices = np.arange(img_num)
@@ -282,11 +285,13 @@ def main():
 
     at = Compose(
         [
-            RandScaleIntensityd(keys=["img"], prob=1, factors=0.1, allow_missing_keys=True),
+            RandScaleIntensityd(keys=["img"], prob=0.5, factors=0.1, allow_missing_keys=True),
             ColorJitterd(keys=["img"], allow_missing_keys=True),
-            RandGaussianNoised(keys=["img"], prob=1, mean=0, std=0.1, allow_missing_keys=True),
-            RandGaussianSmoothd(keys=["img"], prob=1, sigma_x=(1, 2), sigma_y=(1, 2), allow_missing_keys=True),
+            RandGaussianNoised(keys=["img"], prob=0.5, mean=0, std=0.1, allow_missing_keys=True),
+            RandGaussianSmoothd(keys=["img"], prob=0.5, sigma_x=(1, 2), sigma_y=(1, 2), allow_missing_keys=True),
+
             EnsureTyped(keys=["img"], allow_missing_keys=True),
+            RandCutoutd(keys=["img"], allow_missing_keys=True, prob=0.5)
         ]
     )
 
@@ -412,22 +417,26 @@ def main():
             waul_img = batch_data["waul_img"].to(device)
             ul_img = batch_data["ul_img"].to(device)
 
+            cut_mask = batch_data["cutout_mask"].to(device)
+
             optimizer.zero_grad()
 
             noise = 0
             if args.vat:
                 with torch.no_grad():
-                    latent = teacher_model.encode(waul_img)
+                    latent = teacher_model.encode(ul_img)
                 p_label = teacher_model.decode(latent)
 
                 logits = torch.flatten(p_label, start_dim=1, end_dim=-1)
+                # calculate the noise (of the latent) by forward the decoder of the model
                 noise = sim.get_vat_noise(teacher_model, latent[-1], logits)
 
             else:
                 with torch.no_grad():
                     p_label = teacher_model(ul_img).clone().detach()
-                    # add consistence
-                    t_lb_label = teacher_model(lb_img).clone().detach()
+
+            # mask the label from teacher model
+            p_label = cut_mask * p_label
 
             imgs = torch.cat([lb_img, waul_img])
             latent = student_model.encode(imgs)
@@ -436,6 +445,7 @@ def main():
 
             adv_loss = 0
             if args.vat:
+                # apply the addition noise
                 latent[-1] = latent[-1] + noise
                 adv_pred_img = student_model.decode(latent)
                 adv_loss = sim.kl(torch.flatten(pred_img, start_dim=1), torch.flatten(adv_pred_img, start_dim=1), reduction="mean")
@@ -448,14 +458,19 @@ def main():
             pred_ul_mask, pred_ul_grad = output2seg_and_grad(pred_ul_img)
             p_label_mask, p_label_grad = output2seg_and_grad(p_label)
 
-            t_label_mask, t_label_grad = output2seg_and_grad(t_lb_label)
-
             conf_ce_loss, _, _, conf = consistency_function_seg(pred_ul_mask, p_label_mask, threshold=confidence_threshold)
-            consistency_loss = (conf_ce_loss + grad_lambda * consistency_function_grad.loss(p_label_grad, pred_ul_grad, 1)) * consistence_w
+
+            # consistency_loss = (conf_ce_loss + grad_lambda * consistency_function_grad.loss(p_label_grad, pred_ul_grad, 1)) * consistence_w
+            consistency_loss = conf_ce_loss * consistence_w
             consistency_loss_2 = 0
 
             # test
-            if args.lb_consisitence > 0:
+            if args.lb_consistence > 0:
+                with torch.no_grad():
+                    # add consistence
+                    t_lb_label = teacher_model(lb_img).clone().detach()
+                t_label_mask, t_label_grad = output2seg_and_grad(t_lb_label)
+
                 conf_ce_loss_2, _, _, conf = consistency_function_seg(pred_mask, t_label_mask, threshold=confidence_threshold)
                 consistency_loss_2 = (conf_ce_loss_2 + grad_lambda * consistency_function_grad.loss(t_label_grad, pred_grad, 1)) * consistence_w
 

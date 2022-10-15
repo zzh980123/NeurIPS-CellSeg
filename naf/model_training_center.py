@@ -9,7 +9,7 @@ import os
 
 from skimage import measure
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
 
 
 import tqdm
@@ -73,7 +73,7 @@ def main():
     # parser.add_argument('--model_path', default='./naf/work_dir/', help='path where to save models and segmentation results')
 
     # Training parameters
-    parser.add_argument("--batch_size", default=6, type=int, help="Batch size per GPU")
+    parser.add_argument("--batch_size", default=5, type=int, help="Batch size per GPU")
     parser.add_argument("--max_epochs", default=1000, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=100, type=int)
@@ -364,7 +364,7 @@ def main():
                 optimizer.step()
 
             epoch_loss += loss.item()
-            epoch_len = len(train_ds) // train_loader.batch_size
+            epoch_len = len(train_loader)
 
             train_bar.set_postfix_str(f"train_loss: {loss.item():.4f}")
             writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)
@@ -413,7 +413,7 @@ def main():
                     pred_label_cpu = pred_label.detach().cpu()[0]
                     label_prob_cpu = distance_label[0]
 
-                    pred_prob_cpu[pred_prob_cpu > 0.95] = 1
+                    pred_prob_cpu[pred_prob_cpu > 0.9] = 1
                     pred_prob_cpu[pred_prob_cpu < 1] = 0
                     pred_prob_cpu = pred_label_cpu * pred_prob_cpu
                     markers = measure.label(pred_prob_cpu)

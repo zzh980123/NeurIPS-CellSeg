@@ -9,6 +9,8 @@ import os
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "3"
 
+from models.daformer_coat_net_grad_v5 import DaFormaerCoATNet_GRAD_V5
+
 import tqdm
 from monai.utils import GridSamplePadMode, GridSampleMode
 
@@ -92,10 +94,10 @@ def main():
     parser.add_argument("--max_epochs", default=1000, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=100, type=int)
-    parser.add_argument("--initial_lr", type=float, default=6e-5, help="learning rate")
+    parser.add_argument("--initial_lr", type=float, default=3e-5, help="learning rate")
     parser.add_argument("--amp", required=False, default=False, action="store_true", help="using amp")
     parser.add_argument("--grad_lambda", type=float, default=1, help="grad hyper-parameter")
-    parser.add_argument("--class_lambda", type=float, default=1, help="class hyper-parameter")
+    parser.add_argument("--class_lambda", type=float, default=0.1, help="class hyper-parameter")
 
     args = parser.parse_args()
 
@@ -210,7 +212,7 @@ def main():
             RandRotated(keys=["img", "label"], range_x=(-3.14, 3.14), range_y=(-3.14, 3.14), prob=0.6, mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST],
                         padding_mode=GridSamplePadMode.ZEROS),
             Flow2dRoatateFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
-            ColorJitterd(keys=["img"]),
+            # ColorJitterd(keys=["img"]),
             RandScaleIntensityd(keys=["img"], prob=0.25, factors=0.1),
             RandGaussianNoised(keys=["img"], prob=0.25, mean=0, std=0.1),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
@@ -270,7 +272,7 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=torch.cuda.is_available(),
+        pin_memory=torch.cuda.is_available(), drop_last=True
     )
     # create a validation data loader
     val_ds = monai.data.Dataset(data=val_files, transform=val_transforms)
@@ -295,12 +297,37 @@ def main():
 
     ce_dice_loss = monai.losses.DiceCELoss(softmax=True).to(device)
     mse_loss = torch.nn.MSELoss().to(device)
-    class_loss = torch.nn.CrossEntropyLoss()
+    class_loss = torch.nn.CrossEntropyLoss().to(device)
     # lovasz_loss = sim.LovaszSoftmaxLoss().to(device)
     # loss_function_3 = DirectionLoss().to(device)
 
     initial_lr = args.initial_lr
-    optimizer = torch.optim.AdamW(model.parameters(), initial_lr)
+    # model: DaFormaerCoATNet_GRAD_V5
+
+    special_lr_rate = 50
+
+    modules = [
+        model.encoder, model.decoder_0, model.grad_conv, model.logit
+    ]
+
+    ext_modules = [
+        model.class_encoder, model.class_linear
+    ]
+
+    params_base = [
+        {
+            'params': module.parameters(), 'lr': initial_lr
+        }
+        for module in modules
+    ]
+    params_ext = [
+        {
+            'params': module.parameters(), 'lr': initial_lr * special_lr_rate
+        }
+        for module in ext_modules
+    ]
+
+    optimizer = torch.optim.AdamW(params_base + params_ext, initial_lr)
 
     # start a typical PyTorch training
     max_epochs = args.max_epochs
@@ -345,7 +372,7 @@ def main():
             inputs, labels, class_label = batch_data["img"].to(device), batch_data["label"].to(
                 device
             ), batch_data["class_label"].to(device)
-            class_onehot_label = monai.networks.one_hot(class_label, args.cell_classes)
+            # class_onehot_label = monai.networks.one_hot(class_label, args.cell_classes)
 
             optimizer.zero_grad()
             # inputs = stain_model(inputs).to(device)
@@ -357,11 +384,11 @@ def main():
 
                 loss = ce_dice_loss(pred_label, labels_onehot) + \
                        grad_lambda * mse_loss(pred_grad, label_grad_yx * 5) + \
-                       class_lambda * class_loss(class_code, class_onehot_label)
+                       class_lambda * class_loss(class_code, class_label)
                 # 0.2 * lovasz_loss(pred_label, seg_label)
                 # + loss_function_3.forward(pred_grad, label_grad_yx)
-                #      0.2 * loss_function_3.forward(pred_grad, label_grad_yx)
-            del class_label, label_grad, labels_onehot
+                # 0.2 * loss_function_3.forward(pred_grad, label_grad_yx)
+            del class_label, label_grad_yx, labels_onehot
 
             if amp and scaler:
                 scaler.scale(loss).backward()
@@ -411,7 +438,7 @@ def main():
                     sw_batch_size = args.batch_size
 
                     val_outputs = sliding_window_inference(
-                        val_images, roi_size, sw_batch_size, model, overlap=0.5, mode="gaussian"
+                        val_images, roi_size, sw_batch_size, model, overlap=0.5
                     )
 
                     pred_label, pred_grad = output2seg_and_grad(val_outputs)

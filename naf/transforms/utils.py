@@ -19,7 +19,7 @@ from monai.transforms.transform import MapTransform, RandomizableTransform
 from monai.transforms.utility.array import (
     AddChannel,
 )
-from monai.utils import MetricReduction, ensure_tuple
+from monai.utils import MetricReduction, ensure_tuple, TransformBackends
 from numba import jit
 from scipy.optimize import linear_sum_assignment
 from skimage import segmentation, measure, morphology
@@ -480,6 +480,71 @@ class StainNormalized(MapTransform):
             d[key] = self.normalizer.transform(d[key])
 
         return d
+
+
+# Node that the mixcut op will store a mask of the cut area, if you transform the original images, the mixcut_mask should be transformed too,
+# so we suggest to use the operation at the end of the transforms' chain.
+# only 2D images with channel first support.
+class RandCutoutd(RandomizableTransform, MapTransform):
+    backend = [TransformBackends.TORCH, TransformBackends.NUMPY]
+
+    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False, prob=0.5, lam=0.01, num=16, do_transform: bool = True):
+        RandomizableTransform.__init__(self, prob)
+        MapTransform.__init__(self, keys)
+        self.lam = lam
+        self.num = num
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Mapping[Hashable, NdarrayOrTensor]:
+        self.randomize(data)
+        d = dict(data)
+        mask = 1
+
+        bbox_list = []
+        flag = False
+        for key in self.key_iterator(d):
+
+            if not flag:
+                bbox_list = self.cutout(self.num, d[key].shape, self.lam)
+                if isinstance(d[key], np.ndarray):
+                    mask = np.ones(d[key][:1].shape)
+                elif isinstance(d[key], torch.Tensor):
+                    mask = torch.ones(d[key][:1].shape)
+                for bbx1, bbx2, bby1, bby2 in bbox_list:
+                    mask[..., bbx1: bbx2, bby1: bby2] = 0
+                flag = True
+            if not self._do_transform:
+                # We break the transfomers and set the "cutmix_mask" buffer.
+                break
+
+            d[key] = d[key] * mask
+
+        d['cutout_mask'] = mask
+
+        return d
+
+    def cutout(self, num, size, lam):
+        res = []
+
+        for _ in range(num):
+            res.append(tuple(self._cut(size, lam)))
+
+        return res
+
+    def _cut(self, size, lam):
+        H = size[-2]
+        W = size[-1]
+
+        cut_rat = np.sqrt(lam)
+        cut_h = np.int(W * cut_rat)
+        cut_w = np.int(H * cut_rat)
+        cx = np.random.randint(H)
+        cy = np.random.randint(W)
+        bbx1 = np.clip(cx - cut_h // 2.0, 0, H)
+        bbx2 = np.clip(cx + cut_h // 2.0, bbx1, H)
+        bby1 = np.clip(cy - cut_w // 2.0, 0, W)
+        bby2 = np.clip(cy + cut_w // 2.0, bby1, H)
+
+        return int(bby1), int(bby2), int(bbx1), int(bbx2)
 
 
 class ColorJitterd(MapTransform):
@@ -1118,22 +1183,23 @@ from skimage.segmentation import watershed
 from skimage.feature import peak_local_max
 
 
-def post_process_3(label, min_distance=6, cell_prob=0.5, markers=None):
+def post_process_3(label, min_distance=4, cell_prob=0.5, markers=None):
     # watershed
-    label[cell_prob > 0.5] = 1
+    label[label > cell_prob] = 1
+    label[label <= cell_prob] = 0
 
     # label = ndi.binary_opening(label, structure=None)
 
-    distance = ndi.distance_transform_edt(label)
-
     if markers is None:
+        distance = ndi.distance_transform_edt(label)
+
         max_coords = peak_local_max(distance, labels=label, min_distance=min_distance,
                                     footprint=np.ones((2, 2)))
         local_maxima = np.zeros_like(label, dtype=bool)
         local_maxima[tuple(max_coords.T)] = True
         markers = ndi.label(local_maxima)[0]
 
-    label = watershed(-distance, markers=markers, mask=label)
+    label = watershed(label, markers=markers, mask=label)
 
     # label = ndi.grey_opening(label, size=(3,3), footprint=(3, 3))
 

@@ -1,3 +1,5 @@
+from numba import jit
+
 from models.daformer import *
 from models.coat import *
 from models.layers import PixelShuffleBlock
@@ -32,7 +34,8 @@ class DaFormaerCoATNet_GRAD_V5(nn.Module):
                  encoder=coat_lite_medium,
                  encoder_pretrain='coat_lite_medium_384x384_f9129688.pth',
                  decoder=daformer_involution,
-                 decoder_dim=320):
+                 decoder_dim=320,
+                 dropout_p=0.5):
         super(DaFormaerCoATNet_GRAD_V5, self).__init__()
 
         assert out_channel > 3
@@ -49,30 +52,66 @@ class DaFormaerCoATNet_GRAD_V5(nn.Module):
 
         self.class_encoder = nn.Sequential(
             Conv2dBnReLU(encoder_dims[-1], encoder_dims[-1]),
+            Conv2dBnReLU(encoder_dims[-1], encoder_dims[-1]),
             nn.AdaptiveAvgPool2d(1),
             # cell images has 4 modalities
             nn.Conv2d(in_channels=encoder_dims[-1], out_channels=classes_num, kernel_size=1),
             nn.BatchNorm2d(classes_num),
-            nn.LeakyReLU(inplace=True)
+            nn.ReLU(inplace=True)
         )
 
         # shuffle the channels
         self.class_linear = nn.Linear(
             classes_num,
-            decoder_dim
+            classes_num
         )
-        self.decoder = decoder(
+        # self.class_dropout = nn.Dropout(inplace=True, p=dropout_p)
+
+        self.decoder_0 = decoder(
             encoder_dim=encoder_dims,
-            decoder_dim=decoder_dim,
+            decoder_dim=decoder_dim // 2,
         )
+
+        self.decoder_1 = decoder(
+            encoder_dim=encoder_dims,
+            decoder_dim=decoder_dim // 2,
+        )
+
+        self.decoder_2 = decoder(
+            encoder_dim=encoder_dims,
+            decoder_dim=decoder_dim // 2,
+        )
+
+        self.decoder_3 = decoder(
+            encoder_dim=encoder_dims,
+            decoder_dim=decoder_dim // 2,
+        )
+
+        # self.mlps = nn.ModuleList(
+        #     [
+        #         nn.Sequential(nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
+        #                       nn.BatchNorm2d(decoder_dim),
+        #                       ),
+        #         nn.Sequential(nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
+        #                       nn.BatchNorm2d(decoder_dim),
+        #                       ),
+        #         nn.Sequential(nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
+        #                       nn.BatchNorm2d(decoder_dim),
+        #                       ),
+        #         nn.Sequential(nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
+        #                       nn.BatchNorm2d(decoder_dim),
+        #                       )
+        #     ]
+        # )
+
         self.logit = nn.Sequential(
-            nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
+            nn.Conv2d(decoder_dim // 2, decoder_dim, kernel_size=3, padding=1),
             nn.BatchNorm2d(decoder_dim),
             PixelShuffleBlock(decoder_dim, out_channel - 2, upscale_factor=4),
             nn.BatchNorm2d(out_channel - 2),
         )
         self.grad_conv = nn.Sequential(
-            nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
+            nn.Conv2d(decoder_dim // 2, decoder_dim, kernel_size=3, padding=1),
             nn.BatchNorm2d(decoder_dim),
             PixelShuffleBlock(decoder_dim, 2, upscale_factor=4),
             nn.BatchNorm2d(2)
@@ -90,12 +129,13 @@ class DaFormaerCoATNet_GRAD_V5(nn.Module):
             self.encoder.load_state_dict(checkpoint['model'], strict=False)
 
         self.output_latent = False
+        self.class_sup = False
 
     def output_latent_enable(self, enable=True):
         self.output_latent = enable
 
     def forward(self, x, noise=0.0, class_sup=False):
-        if class_sup:
+        if class_sup or self.class_sup:
             return self._forward_with_class(x, noise)
         return self._forward(x, noise)
 
@@ -116,7 +156,8 @@ class DaFormaerCoATNet_GRAD_V5(nn.Module):
 
         # add noise for VAT
         encode_info[-1] = encode_info[-1] + noise
-        out = self.class_ca_decode(encode_info, class_ca)
+        confidence = torch.std(class_code, dim=1)
+        out = self.class_ca_decode(encode_info, class_ca, confidence)
 
         if self.output_latent:
             return out, class_code, encode_info
@@ -129,7 +170,7 @@ class DaFormaerCoATNet_GRAD_V5(nn.Module):
         return encode_info
 
     def decode(self, latent):
-        last, decode_info = self.decoder(latent)
+        last, decode_info = self.decoder_0(latent)
 
         logit = self.logit(last)
         grads = self.grad_conv(last)
@@ -137,17 +178,23 @@ class DaFormaerCoATNet_GRAD_V5(nn.Module):
         out = torch.cat([logit, grads], dim=1)
         return out
 
-    def class_ca_decode(self, latent, class_ca):
-        last, decode_info = self.decoder(latent)
-        last = last * torch.log_softmax(class_ca[:, :, None, None], dim=1)
-        logit = self.logit(last)
-        grads = self.grad_conv(last)
+    def class_ca_decode(self, latent, class_ca, conf):
+
+        select = F.gumbel_softmax(class_ca, dim=1, tau=100 * (conf.mean().item() - 0.5) ** 2 + 1e-5)
+        class_num = class_ca.shape[1]
+        last_ca = 0
+        for i in range(class_num):
+            last = getattr(self, f'decoder_{i}')(latent)[0]
+            last_ca = last_ca + last * select[:, i:i + 1, None, None] / class_num
+
+        logit = self.logit(last_ca)
+        grads = self.grad_conv(last_ca)
 
         out = torch.cat([logit, grads], dim=1)
         return out
 
     def class_encode(self, encode_info):
-        class_codes = self.class_encoder(encode_info[-1])
+        class_codes = self.class_encoder(encode_info[-1].detach())
         class_codes = torch.flatten(class_codes, 1, -1)
-        class_ca = self.class_linear(class_codes)
+        class_ca = self.class_linear(class_codes.detach())
         return class_codes, class_ca

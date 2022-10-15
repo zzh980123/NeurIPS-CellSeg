@@ -15,10 +15,10 @@ from monai.transforms import (
 test_bright = tra.RandBrightnessd(keys=["img"], allow_missing_keys=True, prob=1, add=(-50, 50))
 test_hue = tra.RandHueAndSaturationd(keys=["img"], allow_missing_keys=True, prob=1, add=(-100, 100))
 test_inverse = tra.RandInversed(keys=["img"], prob=1)
+test_mixcut = tra.RandCutoutd(keys=['img'], prob=1)
 
 if __name__ == '__main__':
     image_test = "./datas/cell_00028.png"
-
 
 
     affine_transformers = Compose(
@@ -77,22 +77,32 @@ if __name__ == '__main__':
         ]
     )
 
-    image_ = {"img": image_test, "label": image_test}
-    age_trans = pre_transformers(image_)
-    image_trans = post_transforms(age_trans)
+    mixcut_transformers = Compose(
+        [
+            LoadImaged(keys=["img"], reader=PILReader),
+            AsChannelFirstd(keys=["img"], allow_missing_keys=True),
+            test_mixcut,
+            SaveImaged(keys=["img"], output_dir="./results", output_ext=".png", output_postfix="mixcut", writer=PILWriter)
+        ]
+    )
 
-    with allow_missing_keys_mode(post_transforms):
-        inverted_seg = post_transforms.inverse(image_trans)
-        label = inverted_seg["img"]
-        inverted_seg["label"] = label
-
-    save = SaveImaged(keys=["label"], output_dir="./results", output_ext=".png", output_postfix="backward_trans", writer=PILWriter)
-    save(inverted_seg)
+    # image_ = {"img": image_test, "label": image_test}
+    # age_trans = pre_transformers(image_)
+    # image_trans = post_transforms(age_trans)
+    #
+    # with allow_missing_keys_mode(post_transforms):
+    #     inverted_seg = post_transforms.inverse(image_trans)
+    #     label = inverted_seg["img"]
+    #     inverted_seg["label"] = label
+    #
+    # save = SaveImaged(keys=["label"], output_dir="./results", output_ext=".png", output_postfix="backward_trans", writer=PILWriter)
+    # save(inverted_seg)
 
     res0 = affine_transformers({"img": image_test})
     res1 = brightness_transformers({"img": image_test})
     res2 = hue_transformers({"img": image_test})
     res3 = inverse_transformers({"img": image_test})
+    res4 = mixcut_transformers({"img": image_test})
 
     # fixed_aug_inputs = mean_teacher_transforms(inputs)
     #

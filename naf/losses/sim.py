@@ -627,7 +627,7 @@ def virtual_adversarial_training(decoder, hidden_status, logits, step=1e-3):
 
 def get_vat_noise(decoder, hidden_status, logits, step=1e-3):
     embed: torch.FloatTensor = hidden_status
-
+    # create a noise by sampling from normal distribution
     noise = embed.data.new(embed.size()).normal_(0, 1) * 1e-5
     noise.requires_grad_()
 
@@ -636,7 +636,7 @@ def get_vat_noise(decoder, hidden_status, logits, step=1e-3):
 
     adv_loss = kl(adv_output, logits)
 
-    # calculate the max grad direction
+    # calculate the grad direction
     delta_grad, _ = torch.autograd.grad(adv_loss, noise, only_inputs=True)
 
     norm = delta_grad.norm()
@@ -649,7 +649,6 @@ def get_vat_noise(decoder, hidden_status, logits, step=1e-3):
     noise = adv_project(noise, norm_type="l2", eps=1e-6)
 
     return noise
-
 
 
 if __name__ == '__main__':

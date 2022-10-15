@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from models.layers import DeformableConvLayer, Involution, InvolutionNative
+from models.layers import DeformableConvLayer, Involution, InvolutionNative, HugeConv2dBlock
 
 
 class MixUpSample(nn.Module):
@@ -150,18 +150,22 @@ class DaformerDecoder(nn.Module):
             dilation=[1, 6, 12, 18],
             use_bn_mlp=True,
             fuse='conv3x3',
-            img_size=None
+            enable_huge_conv=False,
+            ratio=2
     ):
         super().__init__()
+        layer_num = len(encoder_dim) * ratio
         self.mlp = nn.ModuleList([
             nn.Sequential(
                 # Conv2dBnReLU(dim, decoder_dim, 1, padding=0), #follow mmseg to use conv-bn-relu
                 *(
-                    (nn.Conv2d(dim, decoder_dim, 1, padding=0, bias=False),
+                    (nn.Conv2d(dim, decoder_dim, 1, padding=0, bias=False) if not enable_huge_conv else HugeConv2dBlock(dim, decoder_dim, kernel_size=(
+                    2 ** (layer_num - i) - 1, 2 ** (layer_num - i) - 1)),
                      nn.BatchNorm2d(decoder_dim),
                      nn.ReLU(inplace=True),
                      ) if use_bn_mlp else
-                    (nn.Conv2d(dim, decoder_dim, 1, padding=0, bias=True),)
+                    (nn.Conv2d(dim, decoder_dim, 1, padding=0, bias=True),) if not enable_huge_conv else HugeConv2dBlock(dim, decoder_dim, kernel_size=(
+                    2 ** (layer_num - i) - 1, 2 ** (layer_num - i) - 1))
                 ),
 
                 MixUpSample(2 ** i) if i != 0 else nn.Identity(),
@@ -222,9 +226,14 @@ class DaformerDecoder(nn.Module):
                 nn.BatchNorm2d(decoder_dim),
                 nn.ReLU(inplace=True)
             )
+        # if fuse == 'hugeconv':
+        #     self.fuse = nn.Sequential(
+        #         HugeConv2dBlock(decoder_dim * len(encoder_dim),
+        #         decoder_dim),
+        #         nn.ReLU(inplace=True)
+        #     )
 
     def forward(self, feature):
-
         out = []
         for i, f in enumerate(feature):
             f = self.mlp[i](f)
@@ -242,16 +251,35 @@ class daformer_conv3x3(DaformerDecoder):
             **kwargs
         )
 
+
 class daformer_involution(DaformerDecoder):
     def __init__(self, **kwargs):
         super(daformer_involution, self).__init__(
             fuse='involution',
+
             **kwargs
         )
+
+class daformer_involution_hc(DaformerDecoder):
+    def __init__(self, **kwargs):
+        super(daformer_involution_hc, self).__init__(
+            fuse='involution',
+            enable_huge_conv=True,
+            **kwargs
+        )
+
 
 class daformer_involution_native(DaformerDecoder):
     def __init__(self, **kwargs):
         super(daformer_involution_native, self).__init__(
             fuse='involution_native',
+            **kwargs
+        )
+
+
+class daformer_conv29x29(DaformerDecoder):
+    def __init__(self, **kwargs):
+        super(daformer_conv29x29, self).__init__(
+            fuse='hugeconv',
             **kwargs
         )

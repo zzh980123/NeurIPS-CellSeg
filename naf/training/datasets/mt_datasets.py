@@ -38,5 +38,6 @@ class DualStreamDataset(Dataset):
         combine_ = labeled_data
         combine_["waul_img"] = weak_aug_unlabeled_data["img"]
         combine_["ul_img"] = unlabeled_data["img"]
+        combine_["cutout_mask"] = weak_aug_unlabeled_data["cutout_mask"]
 
         return combine_

@@ -117,8 +117,9 @@ def main():
             pred_label, pred_grad = output2seg_and_grad(test_pred_out)
 
             # pred_label = torch.softmax(pred_label, dim=1)
-            pred_label[0, 1] += 0.1
-            pred_label = torch.argmax(pred_label, dim=1)  # (B, C, H, W)
+            # pred_label[0, 1] += 0.1
+            # pred_label = torch.argmax(pred_label, dim=1)  # (B, C, H, W)
+            pred_label = pred_label[:, 1]  # (B, C, H, W)
             pred_grad_cpu = pred_grad.detach().cpu()[0].numpy()
             pred_label_cpu = pred_label.detach().cpu()[0].numpy()
             # pred_label_cpu[pred_label_cpu > 0.5] = 1
@@ -132,7 +133,7 @@ def main():
                     # 74.87
                     markers, _ = flow_gen.compute_masks(pred_grad_cpu,
                                                         pred_label_cpu,
-                                                        cellprob_threshold=0.5, flow_threshold=1.6, niter=3, use_gpu=True, min_size=2)
+                                                        cellprob_threshold=0.5, flow_threshold=1e6, niter=3, use_gpu=True, min_size=2)
 
                     # markers, _ = flow_gen.compute_masks(pred_grad_cpu,
                     #                                            pred_label_cpu,
@@ -144,19 +145,19 @@ def main():
                     #                                            cellprob_threshold=0.5, use_gpu=True)
 
                     if markers.max() == 0:
-                        markers = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.6), 16), connectivity=1)
-                    test_pred_mask = post_process_3(label=pred_label_cpu, cell_prob=0.6, markers=markers)
+                        markers = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.5), 16), connectivity=1)
+                    test_pred_mask = post_process_3(label=pred_label_cpu, cell_prob=0.5, markers=markers)
                 else:
                     test_pred_mask, _ = flow_gen.compute_masks(pred_grad_cpu,
                                            pred_label_cpu,
-                                           cellprob_threshold=0.5, flow_threshold=10, niter=800, use_gpu=True, min_size=16)
+                                           cellprob_threshold=0.5, niter=800, use_gpu=True, min_size=16)
                     if test_pred_mask.max() == 0:
                         test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.5), 16), connectivity=1)
             else:
                 # test_pred_mask = measure.label(morphology.remove_small_objects(morphology.remove_small_holes(pred_label_cpu > 0.5), 16), connectivity=1)
                 test_pred_mask, _ = flow_gen.compute_masks(pred_grad_cpu,
                                                            pred_label_cpu,
-                                                           cellprob_threshold=0.5, flow_threshold=2, niter=200, use_gpu=False, min_size=16)
+                                                           cellprob_threshold=0.4, flow_threshold=2, niter=200, use_gpu=False, min_size=16)
 
                 # test_pred_mask = post_process_3(morphology.remove_small_objects(morphology.remove_small_holes(test_pred_mask >= 0.5), 16))
             # test_pred_mask = post_process_2(test_pred_mask, max_size=70 * 70 * 4)
