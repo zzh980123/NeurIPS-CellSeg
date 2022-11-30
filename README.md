@@ -114,7 +114,7 @@ Our method achieves the following performance on [NeurIPS Cell Segmentation Chal
 
 | Model name       |  F1 score  | test time |
 | ---------------- | :----: | :--------------------: |
-| My awesome model | 77.24% |         -          |
+| Best Model | 77.24% |         -          |
 
 ## Contributing
 
