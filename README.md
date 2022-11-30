@@ -100,8 +100,6 @@ example with TTA
 naf/test_grad.py -i naf/records/val/images -l naf/records/val/labels -o naf/records/results/coat_daformer_grad_v3_s512_o768_mt --model_path naf/work_dir/coat_daformer_grad_v3_s512/coat_daformer_net_grad_v3_mean_teacher --model_name coat_daformer_net_grad_v3 --show_overlay --show_grad --tta --input_size 768
 ```
 
-> Describe how to infer on testing cases with the trained models.
-
 ## Evaluation
 
 To compute the evaluation metrics, run:
