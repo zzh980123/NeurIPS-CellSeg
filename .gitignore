@@ -168,30 +168,14 @@ cython_debug/
 /naf/dev_workspace/
 /naf/augment/cell_augment/augment_dataset/
 /naf/augment/stain_augment/StainNet/checkpoints/
-将删除 .idea/.gitignore
-将删除 .idea/NeurIPS-CellSeg.iml
-将删除 .idea/inspectionProfiles/
-将删除 .idea/misc.xml
-将删除 .idea/modules.xml
-将删除 .idea/vcs.xml
-将删除 baseline/outputs/
-将删除 data/Train_Pre_3class_aug1/
-将删除 data/Train_Pre_Unlabeled/
-将删除 data/Train_Pre_cell_size/
-将删除 data/Train_Pre_sdf/
-将删除 data/Train_Pre_sdf_aug1/
-将删除 debug/
-将删除 naf/augment/cell_augment/gen/
-将删除 naf/augment/cell_augment/simulation_data_circle_small/
-将删除 naf/augment/cell_augment/simulation_data_stripe_mid/
-将删除 naf/augment/cell_augment/simulation_data_stripe_small/
-将删除 naf/debug/
-将删除 naf/misc/swap_img.png
-将删除 naf/misc/swap_img.tiff
-将删除 naf/misc/swap_img_0001.png
-将删除 naf/misc/swap_img_001.tiff
-将删除 naf/misc/swap_img_01.tiff
-将删除 naf/misc/swap_img_1.png
-将删除 naf/transformers/results/
 !/naf/transforms/results/
 /naf/debug/
+/data/Train_Labeled/
+/data/Train_Pre_3class_aug1/
+/data/Train_Pre_cell_size/
+/data/Train_Pre_grad_aug1/
+/data/Train_Pre_grad_aug2/
+/data/Train_Pre_sdf/
+/data/Train_Pre_sdf_aug1/
+/data/Train_Pre_Unlabeled/
+/naf/records/
