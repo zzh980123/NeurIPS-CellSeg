@@ -1,8 +1,7 @@
 from typing import Union
 
 import torch.nn as nn
-import torch
-from monai.networks.layers import DropPath, trunc_normal_, Conv, Pool, get_act_layer, get_norm_layer
+from monai.networks.layers import Conv, Pool
 
 
 class SpatialTransformer(nn.Module):

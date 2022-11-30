@@ -10,7 +10,7 @@ import itertools
 import os
 import matplotlib.pyplot as plt
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
 
 import monai
 import tqdm
@@ -23,10 +23,11 @@ from losses import sim
 from training.datasets.mt_datasets import DualStreamDataset
 from transforms import flow_gen
 
-from monai.transforms import RandScaleIntensityd, RandRotated
+from monai.transforms import RandScaleIntensityd, RandRotated, RandRotate90d
 import training.ramp as ramps
 
-from transforms.utils import CellF1Metric, ColorJitterd, dx_to_circ, flow, fig2data, Flow2dTransposeFixd, TiffReader2, Flow2dRoatateFixd, Flow2dFlipFixd, RandCutoutd
+from transforms.utils import CellF1Metric, ColorJitterd, dx_to_circ, flow, fig2data, Flow2dTransposeFixd, TiffReader2, Flow2dRoatateFixd, Flow2dFlipFixd, RandCutoutd, \
+    Flow2dRoatation90Fixd
 
 
 def label2seg_and_grad(labels):
@@ -47,6 +48,9 @@ def output2seg_and_grad(outputs):
 
 
 # Fixed mean teacher model only update parameters but not buffers.
+# Note: the buffers of the torch model may contains some other data, for example, the mask
+# of the model parameters (model prune), if the model has some special data in the buffers,
+# TRY TO STOP the ema.
 def update_ema_variables(model, ema_model, global_step, alpha=0.999, use_buffers=True):
     # Use the true average until the exponential average is more correct
     alpha = min(1 - 1 / (global_step + 1), alpha)
@@ -83,14 +87,14 @@ def main():
     # Dataset parameters
     parser.add_argument(
         "--labeled_path",
-        default="./data/Train_Pre_grad/",
+        default="./data/Train_Pre_grad_aug2/",
         type=str,
         help="training data path; subfolders: images, labels",
     )
 
     parser.add_argument(
         "--unlabeled_path",
-        default="./data/Train_Unlabeled/",
+        default="./data/Train_Pre_Unlabeled/",
         type=str,
         help="training unlabeled data path",
     )
@@ -114,18 +118,18 @@ def main():
     parser.add_argument('--continue_train', required=False, default=False, action="store_true")
     parser.add_argument('--val_spilt_fraction', required=False, type=float, default=0.1)
     # Training parameters
-    parser.add_argument("--batch_size", default=2, type=int, help="Batch size per GPU")
-    parser.add_argument("--max_epochs", default=500, type=int)
+    parser.add_argument("--batch_size", default=1, type=int, help="Batch size per GPU")
+    parser.add_argument("--max_epochs", default=800, type=int)
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=100, type=int)
-    parser.add_argument("--initial_lr", type=float, default=3e-5, help="learning rate")
+    parser.add_argument("--initial_lr", type=float, default=6e-5, help="learning rate")
     parser.add_argument("--alpha", type=float, default=0.999, help="ema")
-    parser.add_argument("--confidence_threshold", type=float, default=0.7, help="ema")
+    parser.add_argument("--confidence_threshold", type=float, default=0.50, help="confidence threshold")
     parser.add_argument("--grad_lambda", type=float, default=1, help="grad hyper-parameter")
     parser.add_argument("--vat", required=False, default=False, action="store_true", help="T-VAT enable or not")
     parser.add_argument("--eva_use_student", required=False, default=False, action="store_true", help="eval using student model or not")
     parser.add_argument("--finetune", required=False, default=False, action="store_true", help="finetune will not record the resume checkpoint best val score")
-    parser.add_argument("--consistence_w", type=float, required=False, default=0.4, help="consistence weight")
+    parser.add_argument("--consistence_w", type=float, required=False, default=2, help="consistence weight")
     parser.add_argument("--rampup_length", type=int, required=False, default=60, help="rampup length")
     parser.add_argument("--lb_consistence", type=int, required=False, default=0, help="labeled image consistence loss: enable->1, disable->0")
 
@@ -242,21 +246,21 @@ def main():
             # SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
             RandAxisFlipd(keys=["img", "label"], prob=0.5, allow_missing_keys=True),
             Flow2dFlipFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4, allow_missing_keys=True),
-            # RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
-            # Flow2dRoatation90Fixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
+            RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1], allow_missing_keys=True),
+            Flow2dRoatation90Fixd(keys=["label"], flow_dim_start=2, flow_dim_end=4, allow_missing_keys=True),
             # Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
-            RandRotated(keys=["img", "label"], range_x=(-3.14, 3.14), range_y=(-3.14, 3.14), prob=0.6, mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST],
-                        padding_mode=GridSamplePadMode.ZEROS, allow_missing_keys=True),
-            Flow2dRoatateFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4, allow_missing_keys=True),
+            # RandRotated(keys=["img", "label"], range_x=(-3.14, 3.14), range_y=(-3.14, 3.14), prob=0.6, mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST],
+            #             padding_mode=GridSamplePadMode.ZEROS, allow_missing_keys=True),
+            # Flow2dRoatateFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4, allow_missing_keys=True),
             RandAdjustContrastd(keys=["img"], prob=0.25, gamma=(1, 2)),
-            RandHistogramShiftd(keys=["img"], prob=0.25, num_control_points=3),
+            # RandHistogramShiftd(keys=["img"], prob=0.25, num_control_points=3),
 
             RandZoomd(
                 keys=["img", "label"],
                 prob=0.5,
-                min_zoom=0.5,
-                max_zoom=2,
+                min_zoom=0.2,
+                max_zoom=1.8,
                 mode=["area", "nearest"],
                 padding_mode="constant", allow_missing_keys=True
             ),
@@ -313,7 +317,7 @@ def main():
     del check_data
 
     # %% create a training data loader
-    debug_spilt = -1
+    debug_spilt = len(train_labeled_files)
 
     mt_train_ds = DualStreamDataset(labeled_dataset=train_labeled_files[:debug_spilt], unlabeled_dataset=train_unlabeled_files[:debug_spilt], weak_aug_transforms=at,
                                     strong_aug_transforms=train_transforms)
@@ -343,7 +347,8 @@ def main():
     sup_loss_function_seg = monai.losses.DiceCELoss(softmax=True)
     sup_loss_function_grad = sim.MSE()
 
-    consistency_function_seg = sim.semi_ce_loss
+    # consistency_function_seg = sim.semi_ce_loss
+    consistency_function_seg = torch.nn.CrossEntropyLoss()
     consistency_function_grad = sim.ConfidenceMSE()
 
     # confidence ce
@@ -381,14 +386,15 @@ def main():
     if args.continue_train:
         load_model_path = join(model_path, 'best_F1_model.pth')
         if not os.path.exists(load_model_path):
-            load_model_path = join(args.model_path, 'best_Dice_model.pth')
+            load_model_path = join(model_path, 'best_Dice_model.pth')
         # load model parameters
         checkpoint = torch.load(load_model_path, map_location=torch.device(device))
         student_model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer = torch.optim.AdamW(student_model.parameters(), initial_lr, eps=1e-4)
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        # torch bug... see github issues
-        optimizer.param_groups[0]['capturable'] = True
+        if not args.finetune:
+            optimizer = torch.optim.AdamW(student_model.parameters(), initial_lr, eps=1e-4)
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            # torch bug... see github issues
+            optimizer.param_groups[0]['capturable'] = True
         restart_epoch = checkpoint['epoch']
         history_loss = checkpoint['loss']
         epoch_loss_values.append(history_loss)
@@ -406,15 +412,20 @@ def main():
     from torch.cuda.amp import GradScaler
     scaler = GradScaler()
 
-    teacher_model = copy.deepcopy(student_model)
-    teacher_model.train()
+    teacher_model_1 = copy.deepcopy(student_model)
+    teacher_model_2 = copy.deepcopy(student_model)
+
+    # teacher_model_1.train()
+    # teacher_model_2.train()
 
     if args.vat:
-        teacher_model.output_latent_enable()
+        teacher_model_1.output_latent_enable()
+        teacher_model_2.output_latent_enable()
 
     for epoch in range(restart_epoch, max_epochs):
         student_model.train()
-        teacher_model.train()
+        # teacher_model_1.train()
+        # teacher_model_2.train()
         epoch_loss = 0
         train_bar = tqdm.tqdm(enumerate(train_loader), total=len(train_loader))
         consistence_w = get_current_consistency_weight(epoch, args.rampup_length) * args.consistence_w
@@ -431,21 +442,30 @@ def main():
 
             optimizer.zero_grad()
 
+            teacher_model = teacher_model_1
+            if epoch % 2 == 0:
+                teacher_model = teacher_model_2
             noise = 0
             if args.vat:
                 with torch.no_grad():
-                    latent = teacher_model.encode(ul_img)
-                p_label = teacher_model.decode(latent)
+                    latent_1 = teacher_model_1.encode(ul_img)
+                    latent_2 = teacher_model_2.encode(ul_img)
+                p_label_1 = teacher_model_1.decode(latent_1)
+                p_label_2 = teacher_model_1.decode(latent_2)
                 # mask the label from teacher model
 
-                p_label = cut_mask * p_label
+                # concat at batch channel
+                p_label = cut_mask * (torch.cat([p_label_1, p_label_2]))
                 # calculate the noise (of the latent) by forward the decoder of the model and statistic the grad direction of the latent.
-                noise = sim.get_vat_noise(model_predictor, latent[-1], p_label)
+                noise = sim.get_vat_noise(model_predictor, (latent_1[-1] + latent_2[-1]) * 0.5, p_label)
 
             else:
                 with torch.no_grad():
-                    p_label = teacher_model(ul_img).clone().detach()
-                p_label = cut_mask * p_label
+                    p_label_1 = teacher_model_1(ul_img).detach()
+                    p_label_2 = teacher_model_2(ul_img).detach()
+
+                p_label = cut_mask * (torch.cat([p_label_1, p_label_2]))
+                del p_label_1, p_label_2
 
             imgs = torch.cat([lb_img, waul_img])
             latent = student_model.encode(imgs)
@@ -460,6 +480,7 @@ def main():
 
                 # minimum the distance of the noised latent and the original latent by the predictor(decoder) outputs.
                 # the noise is obtained from teacher model virtual training not student's.
+                # todo it is wrong!
                 adv_loss = model_predictor(latent[-1].detach(), p_label)
                 # adv_pred_img = student_model.decode(latent)
                 # (pred_mask, pred_grad), (adv_pred_mask, adv_pred_grad) = output2seg_and_grad(pred_img),  output2seg_and_grad(adv_pred_img)
@@ -474,21 +495,26 @@ def main():
             pred_ul_mask, pred_ul_grad = output2seg_and_grad(pred_ul_img)
             p_label_mask, p_label_grad = output2seg_and_grad(p_label)
 
-            conf_ce_loss, _, _, conf = consistency_function_seg(pred_ul_mask, p_label_mask, threshold=confidence_threshold)
+            pred_ul_mask_double = torch.repeat_interleave(pred_ul_mask, 2, dim=0)
+            conf_ce_loss = consistency_function_seg(pred_ul_mask_double, torch.softmax(p_label_mask, 1))
 
-            # consistency_loss = (conf_ce_loss + grad_lambda * consistency_function_grad.loss(p_label_grad, pred_ul_grad, 1)) * consistence_w
-            consistency_loss = conf_ce_loss * consistence_w
+            # print(conf_ce_loss, pred_ul_mask_double.shape, p_label_mask.shape)
+
+            consistency_loss = (conf_ce_loss + grad_lambda * consistency_function_grad.loss(p_label_grad, pred_ul_grad, 1)) * consistence_w
+            # consistency_loss = conf_ce_loss * consistence_w
             consistency_loss_2 = 0
 
             # test
-            if args.lb_consistence > 0:
-                with torch.no_grad():
-                    # add consistence
-                    t_lb_label = teacher_model(lb_img).clone().detach()
-                t_label_mask, t_label_grad = output2seg_and_grad(t_lb_label)
-
-                conf_ce_loss_2, _, _, conf = consistency_function_seg(pred_mask, t_label_mask, threshold=confidence_threshold)
-                consistency_loss_2 = (conf_ce_loss_2 + grad_lambda * consistency_function_grad.loss(t_label_grad, pred_grad, 1)) * consistence_w
+            # if args.lb_consistence > 0:
+            #     with torch.no_grad():
+            #         # add consistence
+            #         t_lb_label_1 = teacher_model_1(lb_img).detach()
+            #         t_lb_label_2 = teacher_model_2(lb_img).detach()
+            #         t_lb_label = 0.5 * (t_lb_label_1 + t_lb_label_2)
+            #     t_label_mask, t_label_grad = output2seg_and_grad(t_lb_label)
+            #
+            #     conf_ce_loss_2 = consistency_function_seg(torch.repeat_interleave(pred_mask, 2, dim=0), t_label_mask)
+            #     consistency_loss_2 = (conf_ce_loss_2 + grad_lambda * consistency_function_grad.loss(t_label_grad, pred_grad, 1)) * consistence_w
 
             sup_loss = sup_loss_function_seg(pred_mask, labels_onehot) + grad_lambda * sup_loss_function_grad.loss(label_grad * 5, pred_grad)
 
@@ -503,6 +529,7 @@ def main():
             global_step = epoch * epoch_len + step
 
             # update the teacher model at each step
+            # update one model
             update_ema_variables(student_model, teacher_model, global_step, alpha=alpha)
 
             train_bar.set_postfix_str(f"train_loss: {loss.item():.4f}")
@@ -512,7 +539,7 @@ def main():
         epoch_loss_values.append(epoch_loss)
         print(f"epoch {epoch} average loss: {epoch_loss:.4f}")
 
-        eval_model = student_model if args.eva_use_student else teacher_model
+        eval_model = student_model if args.eva_use_student else teacher_model_1
 
         checkpoint = {
             "epoch": epoch,

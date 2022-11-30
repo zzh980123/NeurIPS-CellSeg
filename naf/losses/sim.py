@@ -226,10 +226,10 @@ def semi_ce_loss(inputs, targets,
                     "0.6~0.7", "0.7~0.8", "0.8~0.9",
                     "> 0.9"]
 
-        rate = [torch.sum((torch.logical_and((i - 1) / 10 < targets_real_prob, targets_real_prob < i / 10)) == True)
+        rate = [torch.sum((torch.logical_and((i - 1) / 10 < targets_real_prob, targets_real_prob < i / 10)))
                 / total_number for i in range(1, 11)]
 
-        max_rate = [torch.sum((torch.logical_and((i - 1) / 10 < weight, weight < i / 10)) == True)
+        max_rate = [torch.sum((torch.logical_and((i - 1) / 10 < weight, weight < i / 10)))
                     / weight.numel() for i in range(1, 11)]
 
         pass_rate["entire_prob_boundary"] = [[label, val] for (label, val) in zip(boundary, rate)]

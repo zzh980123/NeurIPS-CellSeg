@@ -8,7 +8,7 @@ import argparse
 import os
 import tqdm
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 from skimage import measure, morphology
 

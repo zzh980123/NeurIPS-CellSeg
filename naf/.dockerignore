@@ -216,3 +216,8 @@ dev_workspace/
 work_dir/
 !work_dir/best_model/**/*
 /transforms/results/
+changlelog.md
+docker_run.sh
+train*.sh
+pre_class3.sh
+model_training*.py

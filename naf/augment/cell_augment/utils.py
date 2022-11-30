@@ -172,6 +172,20 @@ def gen_stripe_small_cells(start_cell_num=1034):
     return default_image_generate(image_dir, label_dir, start_cell_num=idx, shadow=120, base_color=220, ol=-255, bg_color=20)
 
 
+def gen_stripe_small_cells_unlabel(start_cell_num=3000):
+    label_dir = "gen/stripe_small_dark/gen_labels"
+    image_dir = "gen/stripe_small_dark/gen_imgs"
+    simulation_data_dir = "simulation_data_stripe_small"
+    convert_sim_data2png(simulation_data_dir, label_dir)
+
+    idx = default_image_generate(image_dir, label_dir, start_cell_num=start_cell_num, base_color=20, ol=20, shadow=40, bg_color=100, prefix="unlabeled_cell_")
+    label_dir = "gen/stripe_small_light/gen_labels"
+    image_dir = "gen/stripe_small_light/gen_imgs"
+    convert_sim_data2png(simulation_data_dir, label_dir)
+
+    return default_image_generate(image_dir, label_dir, start_cell_num=idx, shadow=120, base_color=220, ol=-255, bg_color=20, prefix="unlabeled_cell_")
+
+
 def gen_circle_small_cells(start_cell_num=1114):
     label_dir = "gen/circle_small_dark/gen_labels"
     image_dir = "gen/circle_small_dark/gen_imgs"
@@ -186,14 +200,14 @@ def gen_circle_small_cells(start_cell_num=1114):
     return default_image_generate(image_dir, label_dir, start_cell_num=idx, shadow=-20, base_color=140, ol=20, bg_color=20, in_2=6)
 
 
-def default_image_generate(image_dir, label_dir, start_cell_num=1001, base_color=200, ol=220, shadow=100, bg_color=120, in_1=1, in_2=2):
+def default_image_generate(image_dir, label_dir, start_cell_num=1001, base_color=200, ol=220, shadow=100, bg_color=120, in_1=1, in_2=2, posfix="_label", prefix="cell_"):
     import tqdm
     labels = glob.glob(f"{label_dir}/*")
     for l in tqdm.tqdm(labels, total=len(labels)):
         img = io.imread_v2(l)
         file_name = os.path.basename(l)
         rand_img = random_color_inside_cell_label(img, dec=0.3, base_color=base_color, ol=ol, shadow=shadow, base_color_dec=0.6, bgc=bg_color, in_1=in_1, in_2=in_2)
-        io.imwrite(check_and_create(f"{image_dir}/{file_name.replace('_label', '')}"), rand_img)
+        io.imwrite(check_and_create(f"{image_dir}/{file_name.replace(posfix, '')}"), rand_img)
         # io.imwrite(f"{image_dir}/{file_name.replace('_label', '_reverse')}", 255 - rand_img)
 
     imgs = glob.glob(f"{image_dir}/*")
@@ -202,8 +216,8 @@ def default_image_generate(image_dir, label_dir, start_cell_num=1001, base_color
     cell_idx = start_cell_num
     for img, label in zip(imgs, labels):
         idx = "%05d" % cell_idx
-        img_name = f"cell_{idx}.png"
-        lb_name = f"cell_{idx}_label.png"
+        img_name = f"{prefix}{idx}.png"
+        lb_name = f"{prefix}{idx}{posfix}.png"
 
         os.rename(img, check_and_create(os.path.join(image_dir, img_name)))
         os.rename(label, check_and_create(os.path.join(label_dir, lb_name)))
@@ -214,5 +228,8 @@ def default_image_generate(image_dir, label_dir, start_cell_num=1001, base_color
 
 
 if __name__ == '__main__':
-    # gen_stripe_small_cells()
-    gen_circle_small_cells(1114)
+    # gen_stripe_small_cells_unlabel(3000)
+    gen_stripe_mid_cells(1001)
+    # gen_circle_small_cells(1114)
+
+

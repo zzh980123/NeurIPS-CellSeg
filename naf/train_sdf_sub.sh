@@ -1,1 +1,0 @@
-cd .. && pwd && python ./naf/model_training_sdf_sub.py --data_path ./data/Train_Pre_sdf --work_dir ./naf/work_dir/swinunetr_sdf_sub --model_name swinunetr --initial_lr 1e-4

@@ -7,7 +7,10 @@ from models.daformer_coat_net_center import DaFormaerCoATNet_Center
 from models.daformer_coat_net_doubel_branch import DaFormaerCoATNet_db
 from models.daformer_coat_net_grad import DaFormaerCoATNet_GRAD
 from models.daformer_coat_net_grad_v2 import DaFormaerCoATNet_GRAD_V2
-from models.daformer_coat_net_grad_v3 import DaFormaerCoATNet_GRAD_V3
+from models.daformer_coat_net_grad_v3 import DaFormerCoATNet_GRAD_V3
+from models.daformer_coat_net_grad_v3_involution import DaFormaerCoATNet_GRAD_V3_INVCON
+from models.daformer_coat_net_grad_v3_n import DaFormaerCoATNet_GRAD_V3_N
+from models.daformer_coat_net_grad_v3_native_iv import DaFormaerCoATNet_GRAD_V3_NIV
 from models.daformer_coat_net_grad_v3p1 import DaFormaerCoATNet_GRAD_V3p1
 from models.daformer_coat_net_grad_v5 import DaFormaerCoATNet_GRAD_V5
 
@@ -22,11 +25,12 @@ from models.swinunetr_dfc_v5 import SwinUNETR_DFCv5
 from models.swinunetr_style import SwinUNETRStyle
 from models.swinunetrv2 import SwinUNETRV2
 from models.swinunetrv3 import SwinUNETRV3
+from models.daformer_coat_net_grad_v3aux import DaFormaerCoATNet_GRAD_V3_AUX
 
 
-def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2, pretrained_model_paths=[]):
+def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2, pretrained_model_paths=[]):    
     if model_name == 'unet':
-        model = monai.networks.nets.UNet(
+        model = monai.networks.nets.UNet(  # type: ignore
             spatial_dims=spatial_dims,
             in_channels=in_channels,
             out_channels=args.num_class,
@@ -216,7 +220,7 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2, 
             encoder_pretrain='naf/models/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'
         ).to(device)
     if model_name == "coat_daformer_net_grad_v3":
-        model = DaFormaerCoATNet_GRAD_V3(
+        model = DaFormerCoATNet_GRAD_V3(
             in_channel=in_channels,
             out_channel=args.num_class,
             encoder_pretrain='naf/models/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'
@@ -235,6 +239,33 @@ def model_factory(model_name: str, device, args, in_channels=3, spatial_dims=2, 
         ).to(device)
     if model_name == "coat_daformer_net_center":
         model = DaFormaerCoATNet_Center(
+            in_channel=in_channels,
+            out_channel=args.num_class,
+            encoder_pretrain='naf/models/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'
+        ).to(device)
+    if model_name == "coat_daformer_net_grad_v3_aux":
+        model = DaFormaerCoATNet_GRAD_V3_AUX(
+            in_channel=in_channels,
+            out_channel=args.num_class,
+            encoder_pretrain='naf/models/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'
+        ).to(device)
+    if model_name == "coat_daformer_net_grad_v3_niv":
+        # docker not support... v3
+        model = DaFormaerCoATNet_GRAD_V3_NIV(
+            in_channel=in_channels,
+            out_channel=args.num_class,
+            encoder_pretrain='naf/models/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'
+        ).to(device)
+    if model_name == "coat_daformer_net_grad_v3_n":
+        # docker not support... v3
+        model = DaFormaerCoATNet_GRAD_V3_N(
+            in_channel=in_channels,
+            out_channel=args.num_class,
+            encoder_pretrain='naf/models/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'
+        ).to(device)
+    if model_name == "coat_daformer_net_grad_v3_invcon":
+        # docker not support... v3
+        model = DaFormaerCoATNet_GRAD_V3_INVCON(
             in_channel=in_channels,
             out_channel=args.num_class,
             encoder_pretrain='naf/models/PretrainedModel/CoAT/coat_lite_medium_384x384_f9129688.pth'

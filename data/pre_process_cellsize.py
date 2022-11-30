@@ -9,7 +9,7 @@ convert instance labels to three class labels:
 2: boundary
 @author: jma
 
-modified : nowandfuture
+modified: nowandfuture
 """
 import json
 import os

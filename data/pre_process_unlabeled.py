@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Jun 16 13:12:04 2022
-
-convert instance labels to three class labels:
-0: background
-1: interior
-2: boundary
-@author: jma
-"""
 
 import os
 

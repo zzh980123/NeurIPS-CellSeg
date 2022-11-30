@@ -1,4 +1,6 @@
 import os
+
+import matplotlib
 os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 from glob import glob
 
@@ -9,6 +11,7 @@ from augment.stain_augment.StainNet.models import StainNet
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+# matplotlib.use("GTK3Agg")
 import staintools
 import imageio as io
 import cv2
@@ -46,12 +49,12 @@ def create_stain_model(mode=0):
 
 if __name__ == '__main__':
     # staintools.ReinhardColorNormalizer()
-
+    print(os.getcwd())
     normalizer = staintools.ReinhardColorNormalizer()
     model_Net = StainNet().cuda()
-    checkpoint1 = "./StainNet/checkpoints/aligned_cytopathology_dataset/StainNet-3x0_best_psnr_layer3_ch32.pth"
-    checkpoint2 = "./StainNet/checkpoints/aligned_histopathology_dataset/StainNet-Public_layer3_ch32.pth"
-    checkpoint3 = "./StainNet/checkpoints/camelyon16_dataset/StainNet-Public-centerUni_layer3_ch32.pth"
+    checkpoint1 = "./naf/augment/stain_augment/StainNet/checkpoints/aligned_cytopathology_dataset/StainNet-3x0_best_psnr_layer3_ch32.pth"
+    checkpoint2 = "./naf/augment/stain_augment/StainNet/checkpoints/aligned_histopathology_dataset/StainNet-Public_layer3_ch32.pth"
+    checkpoint3 = "./naf/augment/stain_augment/StainNet/checkpoints/camelyon16_dataset/StainNet-Public-centerUni_layer3_ch32.pth"
     model_Net.load_state_dict(torch.load(checkpoint2))
 
     test_img1 = '/media/kevin/870A38D039F26F71/Datasets/hubmap-organ-segmentation/test_images/10078.tiff'
@@ -76,7 +79,7 @@ if __name__ == '__main__':
         print("StainNet", (time.time_ns() - st) / 1000000)
         print(os.path.basename(img_path))
         img = np.column_stack([img_source, res2, res1])
-        plt.imshow(img)
-        plt.show()
+        # plt.imshow(img)
+        # plt.show()
         # io.imwrite(os.path.join("/media/kevin/870A38D039F26F71/Datasets/hubmap-organ-segmentation/HuBMAP_train/transformed", os.path.basename(img_path)), res2)
 

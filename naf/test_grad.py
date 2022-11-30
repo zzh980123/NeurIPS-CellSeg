@@ -19,7 +19,8 @@ from monai.inferers import sliding_window_inference
 import time
 from skimage import io, segmentation, morphology, measure, exposure
 import tifffile as tif
-
+import memory_profiler as pf
+import mem_track
 
 def label2seg_and_grad(labels):
     seg_label = labels[:, 1:2]
@@ -101,7 +102,8 @@ def tta_enhance_invert(out_img):
 def main():
     parser = argparse.ArgumentParser('Baseline for Microscopy image segmentation', add_help=False)
     # Dataset parameters
-    parser.add_argument('-i', '--input_path', default='./inputs', type=str, help='training data path; subfolders: images, labels')
+    parser.add_argument('-i', '--input_path', default='./inputs', type=str, help='')
+    parser.add_argument('-l', '--label_path', default='./labels', type=str, help='')
     parser.add_argument("-o", '--output_path', default='./outputs', type=str, help='output path')
     parser.add_argument('--model_path', default='./work_dir/swinunetrv2_3class', help='path where to save models and segmentation results')
     parser.add_argument('--show_overlay', required=False, default=False, action="store_true", help='save segmentation overlay')
@@ -111,6 +113,7 @@ def main():
     parser.add_argument('--model_name', default='swinunetrv2', help='select mode: unet, unetr, swinunetr，swinunetrv2')
     parser.add_argument('--num_class', default=4, type=int, help='segmentation classes')
     parser.add_argument('--input_size', default=512, type=int, help='segmentation classes')
+    # some enhance
     parser.add_argument('--watershed', required=False, default=False, action="store_true")
     parser.add_argument('--tta', required=False, default=False, action="store_true")
     parser.add_argument('--use_mask_only', required=False, default=False, action="store_true")
@@ -119,8 +122,10 @@ def main():
 
     input_path = args.input_path
     output_path = args.output_path
+    gt_path = args.label_path
     os.makedirs(output_path, exist_ok=True)
     img_names = sorted(os.listdir(join(input_path)))
+    label_names = [os.path.basename(i).replace(".png", "_label_flows.tif") for i in img_names]
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -138,7 +143,7 @@ def main():
     # print(checkpoint['eval_metric'])
     # %%
     roi_size = (args.input_size, args.input_size)
-    sw_batch_size = 2
+    sw_batch_size = 1
     model.eval()
     # model = model.half()
     torch.set_grad_enabled(False)
@@ -151,15 +156,23 @@ def main():
     # flops, parameters = profile(model, inputs=(fake_data,))
     # print(f"FLOPs: {flops / 1e9} G, parameters: {parameters / 1e6} M")
 
-
+    mt = mem_track.MemTracker()
+    total_time = 0
     with torch.no_grad():
-        for img_name in img_names:
+        for img_name, label_name in zip(img_names, label_names):
             # torch.cuda.empty_cache()
 
             if img_name.endswith('.tif') or img_name.endswith('.tiff'):
                 img_data = tif.imread(join(input_path, img_name))
             else:
                 img_data = io.imread(join(input_path, img_name))
+
+            if label_name.endswith('.tif') or label_name.endswith('.tiff'):
+                label_data = tif.imread(join(gt_path, label_name))
+            else:
+                label_data = io.imread(join(gt_path, label_name))
+
+            label_mask = label_data[4, ...].T
 
             # normalize image data
             if len(img_data.shape) == 2:
@@ -174,11 +187,13 @@ def main():
                 if len(img_channel_i[np.nonzero(img_channel_i)]) > 0:
                     pre_img_data[:, :, i] = normalize_channel(img_channel_i, lower=1, upper=99)
 
+
             t0 = time.time()
+            mt.track()
             test_npy01 = pre_img_data / np.max(pre_img_data)
             test_tensor = torch.from_numpy(np.expand_dims(test_npy01, 0)).permute(0, 3, 1, 2).type(torch.FloatTensor).to(device)
 
-            small_img_flag =  test_tensor.shape[2] <= roi_size[0] and test_tensor.shape[3] <= roi_size[1]
+            small_img_flag = test_tensor.shape[2] <= roi_size[0] and test_tensor.shape[3] <= roi_size[1]
 
             # TTA
             if small_img_flag and args.tta:
@@ -192,17 +207,14 @@ def main():
                 
             pred_label, pred_grad = output2seg_and_grad(test_pred_out)
 
-            # pred_label = torch.softmax(pred_label, dim=1)
-            # pred_label[0, 1] += 0.1
-            # pred_label = torch.argmax(pred_label, dim=1)  # (B, C, H, W)
             pred_label = pred_label[:, 1]  # (B, C,
             pred_grad_cpu = pred_grad.detach().cpu()[0].numpy()
             pred_label_cpu = pred_label.detach().cpu()[0].numpy()
 
-            prob_threshold = 0.5
+            prob_threshold = 0.475
 
             if args.tta and small_img_flag:
-                prob_threshold = 0.5
+                prob_threshold = 0.475
 
             # pred_label_cpu[pred_label_cpu > 0.5] = 1
             # label_grad_cpu = label_grad.detach().cpu()[0]
@@ -241,11 +253,13 @@ def main():
                 #                                            pred_label_cpu,
                 #                                            cellprob_threshold=0.4, flow_threshold=2, niter=200, use_gpu=False, min_size=16)
 
-            print(f"{img_name} count: {test_pred_mask.max().item()}.")
+            # print(f"{img_name} count: {test_pred_mask.max().item()}.")
             
             tif.imwrite(join(output_path, img_name.split('.')[0] + '_label.tiff'), test_pred_mask, compression='zlib')
             t1 = time.time()
+            mt.track()
             print(f'Prediction finished: {img_name}; img size = {pre_img_data.shape}; costing: {t1 - t0:.2f}s')
+            total_time += t1 - t0
             if args.show_grad:
                 from transforms.utils import dx_to_circ
                 rgb_grad = dx_to_circ(pred_grad_cpu)
@@ -253,9 +267,16 @@ def main():
             if args.show_overlay:
                 boundary = segmentation.find_boundaries(test_pred_mask, connectivity=1, mode='inner')
                 boundary = morphology.binary_dilation(boundary, morphology.disk(2))
-                img_data[boundary, :] = 255
-                io.imsave(join(output_path, 'overlay_' + img_name), img_data, check_contrast=False)
 
+                boundary_gt = segmentation.find_boundaries(label_mask, connectivity=1, mode='inner')
+                boundary_gt = morphology.binary_dilation(boundary_gt, morphology.disk(4))
+
+                img_data[boundary_gt, :] = [255, 0, 0]
+                img_data[boundary, :] = [255, 255, 0]
+
+                io.imsave(join(output_path, 'overlay_' + img_name), img_data, check_contrast=False)
+            mt.clear_cache()
+        print("total time: ", total_time)
 
 if __name__ == "__main__":
     main()

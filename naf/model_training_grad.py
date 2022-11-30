@@ -7,7 +7,7 @@ Adapted form MONAI Tutorial: https://github.com/Project-MONAI/tutorials/tree/mai
 import argparse
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
 import tqdm
 from monai.utils import GridSamplePadMode, GridSampleMode
@@ -25,7 +25,7 @@ from transforms.utils import (
     Flow2dRoatation90Fixd,
     Flow2dFlipFixd,
     Flow2dRoatateFixd,
-    ColorJitterd)
+    ColorJitterd, RandCutoutd)
 import monai.networks
 
 
@@ -47,7 +47,7 @@ def main():
     # Dataset parameters
     parser.add_argument(
         "--data_path",
-        default="./data/Train_Pre_grad/",
+        default="./data/Train_Pre_grad_aug2/",
         type=str,
         help="training data path; subfolders: images, labels",
     )
@@ -66,7 +66,7 @@ def main():
     parser.add_argument(
         "--input_size", default=512, type=int, help="input size"
     )
-    parser.add_argument('--continue_train', default=False)
+    parser.add_argument('--continue_train', required=False, default=False, action="store_true")
     # parser.add_argument('--model_path', default='./naf/work_dir/', help='path where to save models and segmentation results')
 
     # Training parameters
@@ -75,8 +75,9 @@ def main():
     parser.add_argument("--val_interval", default=2, type=int)
     parser.add_argument("--epoch_tolerance", default=100, type=int)
     parser.add_argument("--initial_lr", type=float, default=6e-5, help="learning rate")
-    parser.add_argument("--amp", type=bool, default=False, help="using amp")
+    parser.add_argument("--amp", required=False, default=False, action="store_true", help="using amp")
     parser.add_argument("--grad_lambda", type=float, default=1, help="grad hyper-parameter")
+    parser.add_argument("--freeze_encoder", required=False, default=False, action="store_true")
 
     args = parser.parse_args()
 
@@ -154,6 +155,11 @@ def main():
         {"img": join(img_path, img_names[i]), "label": join(gt_path, gt_names[i])}
         for i in val_indices
     ]
+
+    import pickle
+    with open('naf/records/val_dataset.pt', 'wb') as f:
+        pickle.dump(val_files, f)
+
     print(
         f"training image num: {len(train_files)}, validation image num: {len(val_files)}"
     )
@@ -182,8 +188,8 @@ def main():
             # SpatialPadd(keys=["img", "label"], spatial_size=args.input_size),
             RandAxisFlipd(keys=["img", "label"], prob=0.5),
             Flow2dFlipFixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
-            # RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
-            # Flow2dRoatation90Fixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
+            RandRotate90d(keys=["img", "label"], prob=0.5, spatial_axes=[0, 1]),
+            Flow2dRoatation90Fixd(keys=["label"], flow_dim_start=2, flow_dim_end=4),
             # Rand2DElasticd(keys=["img", "label"], spacing=(7, 7), magnitude_range=(-3, 3), mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST]),
             # # intensity transform
             RandRotated(keys=["img", "label"], range_x=(-3.14, 3.14), range_y=(-3.14, 3.14), prob=0.6, mode=[GridSampleMode.BILINEAR, GridSampleMode.NEAREST],
@@ -200,11 +206,17 @@ def main():
                 keys=["img", "label"],
                 prob=0.5,
                 min_zoom=0.5,
-                max_zoom=2,
+                max_zoom=1.5,
                 mode=["area", "nearest"],
                 padding_mode="constant"
             ),
+
             EnsureTyped(keys=["img", "label"]),
+
+            RandCutoutd(
+                keys=["img", "label"],
+                prob=0.2,
+            ),
         ]
     )
 
@@ -268,6 +280,10 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = model_factory(args.model_name.lower(), device, args, in_channels=3)
+
+    # get the parameters and FLOPs
+
+
     # from augment.stain_augment.StainNet.models import StainNet
     # stain_model = StainNet()
     # check_point = "./augment/stain_augment/StainNet/checkpoints/aligned_cytopathology_dataset/StainNet-3x0_best_psnr_layer3_ch32.pth"
@@ -317,6 +333,8 @@ def main():
     scaler = None
     if amp:
         scaler = torch.cuda.amp.GradScaler()
+    if args.freeze_encoder and hasattr(model, "freeze_encoder"):
+        model.freeze_encoder()
 
     for epoch in range(restart_epoch, max_epochs):
         model.train()
@@ -342,13 +360,13 @@ def main():
                 loss = ce_dice_loss(pred_label, labels_onehot) + \
                        grad_lambda * mse_loss(pred_grad, label_grad_yx * 5)
                        # 0.2 * lovasz_loss(pred_label, seg_label)
-                # + loss_function_3.forward(pred_grad, label_grad_yx)
-                #      0.2 * loss_function_3.forward(pred_grad, label_grad_yx)
+                    # + loss_function_3.forward(pred_grad, label_grad_yx)
+                    #      0.2 * loss_function_3.forward(pred_grad, label_grad_yx)
 
             if amp and scaler:
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1e4)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
                 scaler.step(optimizer)
                 scaler.update()
             else:

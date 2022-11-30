@@ -1,4 +1,5 @@
 import json
+from logging import log
 import math
 import random
 from os import PathLike
@@ -314,14 +315,6 @@ class Flow2dRoatation90Fixd(MapTransform):
         super().__init__(keys, allow_missing_keys)
         self.flow_slice = slice(flow_dim_start, flow_dim_end)
 
-    def get_rotate_matrix(self, theta):
-        rotate_matrix = np.array([
-            [math.cos(theta), -math.sin(theta)],
-            [math.sin(theta), math.cos(theta)],
-        ])
-
-        return rotate_matrix
-
     def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> Dict[Hashable, NdarrayOrTensor]:
         d = dict(data)
         for key in self.key_iterator(d):
@@ -338,11 +331,39 @@ class Flow2dRoatation90Fixd(MapTransform):
             if rank_k > 0:
                 flow_ = d[key][self.flow_slice]
                 # rotate vector in the field
-                C, H, W = flow_.shape
-                flow_ = self.get_rotate_matrix(math.pi / 2 * rank_k) @ flow_.reshape(C, H * W)
-                d[key][self.flow_slice] = flow_.reshape(C, H, W)
+                d[key][self.flow_slice] = rotate_flow(flow_, rank_k=rank_k)
 
         return d
+
+
+def get_rotate_matrix(theta, is_tensor=False):
+    rotate_matrix = np.array([
+        [math.cos(theta), -math.sin(theta)],
+        [math.sin(theta), math.cos(theta)],
+    ])
+
+    return rotate_matrix
+
+
+def rotate_flow(flow, rank_k=1, theta=None):
+    # print(flow.shape)
+    B = 1
+    if len(flow.shape) == 4:
+        B, C, H, W = flow.shape
+    elif len(flow.shape) == 3:
+        C, H, W = flow.shape
+
+    if theta is None:
+        rm = get_rotate_matrix(math.pi / 2 * rank_k)
+    else:
+        rm = get_rotate_matrix(theta=theta)
+
+    if isinstance(flow, torch.Tensor):
+        rm = torch.from_numpy(rm).float()
+
+    flow = (rm @ flow.reshape(C, H * W)).reshape(C, H, W)
+
+    return flow
 
 
 class Flow2dRoatateFixd(MapTransform):
@@ -513,7 +534,7 @@ class RandCutoutd(RandomizableTransform, MapTransform):
                     mask[..., bbx1: bbx2, bby1: bby2] = 0
                 flag = True
             if not self._do_transform:
-                # We break the transfomers and set the "cutmix_mask" buffer.
+                # We break the transfomers and set the "cutout_mask" buffer.
                 break
 
             d[key] = d[key] * mask

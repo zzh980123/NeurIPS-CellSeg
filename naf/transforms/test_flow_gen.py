@@ -1,9 +1,12 @@
+import sys,os
+
 import glob
 import time
 
 from skimage import measure
 
 import transforms
+
 import transforms.flow_gen as flow
 import tifffile
 import numpy as np
@@ -12,26 +15,67 @@ import matplotlib.pyplot as plot
 import tqdm
 import imageio
 
-from transforms.utils import dx_to_circ, fig2data
+from skimage import io, segmentation, morphology, exposure
+
+from naf.transforms.utils import dx_to_circ, fig2data
+
+def normalize_channel(img, lower=1, upper=99):
+    non_zero_vals = img[np.nonzero(img)]
+    percentiles = np.percentile(non_zero_vals, [lower, upper])
+    if percentiles[1] - percentiles[0] > 0.001:
+        img_norm = exposure.rescale_intensity(img, in_range=(percentiles[0], percentiles[1]), out_range='uint8')
+
+    else:
+        img_norm = img
+    return img_norm.astype(np.uint8)
+
+def create_interior_map(inst_map):
+    """
+    Parameters
+    ----------
+    inst_map : (H,W), np.int16
+        DESCRIPTION.
+
+    Returns
+    -------
+    interior : (H,W), np.uint8 
+        three-class map, values: 0,1,2
+        0: background
+        1: interior
+        2: boundary
+    """
+    # create interior-edge map
+    boundary = segmentation.find_boundaries(inst_map, mode='inner')
+    boundary = morphology.binary_dilation(boundary, morphology.disk(1))
+
+    interior_temp = np.logical_and(~boundary, inst_map > 0)
+    # interior_temp[boundary] = 0
+    interior_temp = morphology.remove_small_objects(interior_temp, min_size=16)
+    interior = np.zeros_like(inst_map, dtype=np.uint8)
+    interior[interior_temp] = 1
+    interior[boundary] = 2
+    return interior
+
+import argparse
 
 if __name__ == '__main__':
-    # label_root = '/media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Labeled/labels'
-    # flow_root = '/media/kevin/870A38D039F26F71/Datasets/NeurISP2022-CellSeg/Train-Labeled/flows'
 
-    is_3classes = True
+    parser = argparse.ArgumentParser('Preprocessing for microscopy image segmentation', add_help=False)
+    parser.add_argument('-i', '--input_path', default='./data/Train_Labeled/labels', type=str, help='training labels path')
+    parser.add_argument("-o", '--output_path', default='./data/Train_Pre_flows/labels', type=str, help='preprocessing data path')
+    parser.add_argument("--instance_convert", action="store_true", help="If the input_path is the 3class-labels, try to convert them to instance labels")
 
-    label_root = '../../data/Train_Pre_3class_aug1/labels'
-    flow_root = '../../data/Train_Pre_3class_aug1/flows'
+    args = parser.parse_args()
+
+    is_3classes = args.instance_convert
+    label_root = args.input_path
+    flow_root = args.output_path
 
     files = glob.glob(label_root + "/*")
+    
     flow_files = [f.replace(label_root, flow_root) for f in files]
 
     for f, ff in tqdm.tqdm(zip(files, flow_files), total=len(files)):
-        # # fixed wrong label from official
-        # if "00686" not in f:
-        #     continue
-        # else:
-        #     print("Fixed")
         if is_3classes:
             classes_3 = imageio.imread_v2(f)
             # to two classes
@@ -40,14 +84,20 @@ if __name__ == '__main__':
         else:
             instance = imageio.imread_v2(f)
 
-        # only cpu support distance calculation... generate the flows by cpu and the flows will be like:
+        # Only when the device is 'cpu' support distance calculation... generate the flows by cpu, and the flows will be like:
         # instance label/channel 0,
         # distance map/channel 1,
         # grad map/channel 2,3,
         # semi-segment label/channel 4
-        res = flow.labels_to_flows([instance], [ff], use_gpu=False, device="cuda:3")
+        # example code:
+        # res = flow.labels_to_flows([instance], [ff], use_gpu=False, device="cpu")
 
-        # # visual result
+        res = flow.labels_to_flows([instance], [ff], use_gpu=False, device="cuda:0")
+        instance_label = create_interior_map(res[0][..., 0])
+        res[0] = instance_label
+        
+        # If you want to see the resluts pealse remove the "#" before the codes.
+        # # visual results
         # for s in res:
         #     grad_yx = s[2:4, :, :]
         #     im = dx_to_circ(grad_yx)

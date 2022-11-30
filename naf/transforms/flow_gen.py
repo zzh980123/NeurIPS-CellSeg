@@ -280,7 +280,7 @@ def masks_to_flows(masks, use_gpu=False, device=None):
     else:
         raise ValueError('masks_to_flows only takes 2D or 3D arrays')
 
-# modified to 2D flow only. Since cneter distance is valid when the input label is 2D.
+# modified to 2D flow only. Since center distance is valid when the input label is 2D.
 def labels_to_flows(labels, files=None, use_gpu=False, device=None, redo_flows=False):
     """ convert labels (list of masks or flows) to flows for training model
     if files is not None, flows are saved to files to be reused

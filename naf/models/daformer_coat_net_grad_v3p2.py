@@ -23,7 +23,7 @@ class RGB(nn.Module):
         return (x - self.mean) / self.std
 
 
-class DaFormerCoATNet_GRAD_V3(nn.Module):
+class DaFormaerCoATNet_GRAD_V3(nn.Module):
 
     def __init__(self,
                  in_channel=3,
@@ -32,7 +32,7 @@ class DaFormerCoATNet_GRAD_V3(nn.Module):
                  encoder_pretrain='coat_lite_medium_384x384_f9129688.pth',
                  decoder=daformer_involution,
                  decoder_dim=320):
-        super(DaFormerCoATNet_GRAD_V3, self).__init__()
+        super(DaFormaerCoATNet_GRAD_V3, self).__init__()
 
         assert out_channel > 3
         # channel0: in prob
@@ -53,21 +53,21 @@ class DaFormerCoATNet_GRAD_V3(nn.Module):
         self.logit = nn.Sequential(
             nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
             nn.BatchNorm2d(decoder_dim),
-            PixelShuffleBlock(decoder_dim, out_channel - 2, upscale_factor=4),
+            nn.ReLU(inplace=True),
+            PixelShuffleBlock(decoder_dim, decoder_dim // 16, upscale_factor=4),
+            nn.BatchNorm2d(decoder_dim // 16),
+            nn.Conv2d(decoder_dim // 16, out_channel - 2, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channel - 2),
         )
         self.grad_conv = nn.Sequential(
             nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
             nn.BatchNorm2d(decoder_dim),
-            PixelShuffleBlock(decoder_dim, 2, upscale_factor=4),
-            nn.BatchNorm2d(2)
+            nn.ReLU(inplace=True),
+            PixelShuffleBlock(decoder_dim, decoder_dim // 16, upscale_factor=4),
+            nn.BatchNorm2d(decoder_dim // 16),
+            nn.Conv2d(decoder_dim // 16, 2, kernel_size=3, padding=1),
+            nn.BatchNorm2d(2),
         )
-
-        # self.conv = nn.Sequential(
-        #     Conv2dBnReLU(in_channel=in_channel, out_channel=decoder_dim, kernel_size=5, padding=2, stride=1),
-        #     Conv2dBnReLU(in_channel=decoder_dim, out_channel=decoder_dim, kernel_size=5, padding=2, stride=1),
-        #     Conv2dBnReLU(in_channel=decoder_dim, out_channel=out_channel, kernel_size=5, padding=2, stride=1),
-        # )
 
         # try to load the pretrained model of CoAT
         if encoder_pretrain is not None:

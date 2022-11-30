@@ -23,16 +23,16 @@ class RGB(nn.Module):
         return (x - self.mean) / self.std
 
 
-class DaFormerCoATNet_GRAD_V3(nn.Module):
+class DaFormaerCoATNet_GRAD_V3_INVCON(nn.Module):
 
     def __init__(self,
                  in_channel=3,
                  out_channel=4,
                  encoder=coat_lite_medium,
                  encoder_pretrain='coat_lite_medium_384x384_f9129688.pth',
-                 decoder=daformer_involution,
+                 decoder=daformer_involution_native,
                  decoder_dim=320):
-        super(DaFormerCoATNet_GRAD_V3, self).__init__()
+        super(DaFormaerCoATNet_GRAD_V3_INVCON, self).__init__()
 
         assert out_channel > 3
         # channel0: in prob
@@ -51,15 +51,17 @@ class DaFormerCoATNet_GRAD_V3(nn.Module):
             decoder_dim=decoder_dim,
         )
         self.logit = nn.Sequential(
-            nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
-            nn.BatchNorm2d(decoder_dim),
-            PixelShuffleBlock(decoder_dim, out_channel - 2, upscale_factor=4),
+            nn.Conv2d(decoder_dim, out_channel - 2, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channel - 2),
+            # PixelShuffleBlock(decoder_dim, out_channel - 2, upscale_factor=4),
+            MixUpSample(4),
             nn.BatchNorm2d(out_channel - 2),
         )
         self.grad_conv = nn.Sequential(
-            nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
-            nn.BatchNorm2d(decoder_dim),
-            PixelShuffleBlock(decoder_dim, 2, upscale_factor=4),
+            nn.Conv2d(decoder_dim, 2, kernel_size=3, padding=1),
+            nn.BatchNorm2d(2),
+            # PixelShuffleBlock(decoder_dim, 2, upscale_factor=4),
+            MixUpSample(4),
             nn.BatchNorm2d(2)
         )
 

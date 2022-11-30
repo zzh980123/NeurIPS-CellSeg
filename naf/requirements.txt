@@ -13,4 +13,11 @@ einops
 imagecodecs
 imgaug
 taichi
+spams
 staintools
+timm
+opencv-python-headless<4.3
+fastremap
+#conda install -c conda-forge cupy cudatoolkit=10.2
+
+

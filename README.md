@@ -1,143 +1,128 @@
-# NeurIPS-CellSeg
+# Watershed-enhanced cell instance segmentation based on guidance of gradient
 
-A naive baseline and submission demo for the [microscopy image segmentation challenge in NeurIPS 2022](https://neurips22-cellseg.grand-challenge.org/)
+This repository is the official implementation of [Watershed-enhanced cell instance segmentation based on guidance of gradient](TBA).
 
-## Requirements
+## Environments and Requirements
 
-Install requirements by
+- Ubuntu 18.04
+- CPU: intel 10900f; RAM: 128GB; GPU: 2080ti
+- CUDA 10.2
+- python 3.8
+- pytorch 1.12.0
 
-```shell
-python -m pip install -r requirements.txt
+To install requirements:
+
+```setup
+pip install -r naf/requirements.txt
 ```
+
+## Dataset
+
+- [Challenge Dataset](https://neurips22-cellseg.grand-challenge.org/dataset/)
+- TODO, [Synthesized data](TBA)
+- Prepare the data with image folder and label folder: image folder saves the cell images, label image folder saves all cell instance/3-classes/flows/sdf labels
+- If train the segmentation methods under mean-theacher framework, you need to prepare a Unlabeled image folder which contains the orginal cell images.
 
 ## Preprocessing
 
-Download training data to the `data` folder
+A brief description of preprocessing method
+Running the data preprocessing code (different cell representations with different preprocssing methods):
 
-Preprocess dataset with
+### synthesized data
 
-```shell
-python data/pre_process_3class.py
+run naf/augment/cell_augment/taichi_example_modify.py to start the engine, generate the points-set files by click the window (manual) or mark the ```random_gen``` ```true``` (automatic, todo. the script not finished, pelease modify the variables in the file). Then run gen/utils.py to generate the images and instance labels. Finally, move the images and labels to the dataset or preprocess them to 3-classes or flows.
+
+```python
+circle_shape_reset() # create circle cells
+stripe_shape_reset() # create stripe cells
+```
+
+You can modify the ```w_n``` and ```cell_num``` to change the number of cell each row and the number of cells in one image.
+
+### 3 classes label
+
+```python
+python data/pre_process_3class.py --input_path <path_to_input_data> --output_path <path_to_output_data>
+```
+
+### flow label
+
+flow label contain 5 channels, pelease see naf/transforms/test_flow_gen.py in detail
+
+```python
+python naf/transforms/test_flow_gen.py --input_path <path_to_input_data> --output_path <path_to_output_data>
+```
+
+### only sdf label
+
+```python
+python naf/sdf_gen.py --input_path <path_to_input_data> --output_path <path_to_output_data>
 ```
 
 ## Training
 
-See all training options with
+To train the model(s) in the paper, run this command:
 
-```shell
-python baseline/model_training_3class.py --help
+```train
+python ./naf/model_training_grad.py --data_path <data_path> --work_dir <model_save_path> --batch_size <batch_size> --grad_lambda <grad_loss_hyper_parameter> --model_name <model_name>
 ```
 
-Train baseline model with
-
-```shell
-python baseline/model_training_3class.py --data_path 'path to training data' --batch_size 8
+```train example
+python ./naf/model_training_grad.py --data_path ./data/Train_Pre_grad_aug2 --work_dir ./naf/work_dir/coat_daformer_grad_s512/ --batch_size 4 --grad_lambda 0.5 --model_name coat_daformer_net_grad_v3
 ```
+
+More examples are under the **naf** folder which format are *train_\*.sh* and mean teacher based methods can be find here.
+
+## Trained Models
+
+You can download trained models here:
+
+- [My awesome model](https://pan.baidu.com/s/1oenPzlN6796AnNBjeQOWUQ?pwd=khak) trained on the above dataset with the above code.
+- [COAT pretrained model](https://vcl.ucsd.edu/coat/pretrained/coat_lite_medium_384x384_f9129688.pth) please put the file into naf/models/PretrainedModel/CoAT.
 
 ## Inference
 
-Run
+To infer the testing cases, run this command:
 
-```shell
-python predict.py -i input_path -o output_path
+```python
+python inference.py --input_data <path_to_data> --label_path <label_path> --model_name <model_name> --model_path <path_to_trained_model> --output_path <path_to_output_data> 
 ```
 
-> Your prediction file should have at least the two arguments: `input_path` and `output_path`. The two arguments are important to establishing connections between local folders and docker folders.
+example with overlay and grad images
 
-## Compute Evaluation Metric (F1 Score)
-
-Run
-
-```shell
-python compute_metric.py --gt_path path_to_labels --seg_path path_to_segmentation
+```python
+naf/test_grad.py -i naf/records/val/images -l naf/records/val/labels -o naf/records/results/coat_daformer_grad_v3_s512_o768_mt --model_path naf/work_dir/coat_daformer_grad_v3_s512/coat_daformer_net_grad_v3_mean_teacher --model_name coat_daformer_net_grad_v3 --show_overlay --show_grad --input_size 768
 ```
 
-> Cells on the boundaries are not considered during evaluation.
+example with TTA
 
-
-
-## Build Docker
-
-We recommend this great tutorial: https://nbviewer.org/github/ericspod/ContainersForCollaboration/blob/master/ContainersForCollaboration.ipynb
-
-### 1) Preparation
-
-The docker is built based on [MONAI](https://hub.docker.com/r/projectmonai/monai)
-
-```shell
-docker pull projectmonai/monai
+```python
+naf/test_grad.py -i naf/records/val/images -l naf/records/val/labels -o naf/records/results/coat_daformer_grad_v3_s512_o768_mt --model_path naf/work_dir/coat_daformer_grad_v3_s512/coat_daformer_net_grad_v3_mean_teacher --model_name coat_daformer_net_grad_v3 --show_overlay --show_grad --tta --input_size 768
 ```
 
-Prepare `Dockerfile`
+> Describe how to infer on testing cases with the trained models.
 
-```dockerfile
-FROM projectmonai/monai:latest
+## Evaluation
 
-WORKDIR /workspace
-COPY ./   /workspace
+To compute the evaluation metrics, run:
+
+```eval
+python baseline/compute_metric.py --seg_data <path_to_inference_results> --gt_data <path_to_ground_truth>
 ```
 
-Put the inference command in the `predict.sh`
+## Results
 
-```bash
-# !/bin/bash -e
-python predict.py -i "/workspace/inputs/"  -o "/workspace/outputs/"
-```
+Our method achieves the following performance on [NeurIPS Cell Segmentation Challenge](https://neurips22-cellseg.grand-challenge.org/neurips22-cellseg/)
 
-> The `input_path` and `output_path` augments should specify the corresponding docker workspace folders rather than local folders, because we will map the local folders to the docker workspace folders when running the docker container.
+| Model name       |  F1 score  | test time |
+| ---------------- | :----: | :--------------------: |
+| My awesome model | 77.24% |         -          |
 
-### 2) Build Docker and make sanity test
+## Contributing
 
-The submitted docker will be evaluated by the following command:
+This repository is released under the Apache License 2.0. License can be found in LICENSE file.
 
-```bash
-docker container run --gpus "device=0" -m 28G --name teamname --rm -v $PWD/CellSeg_Test/:/workspace/inputs/ -v $PWD/teamname_seg/:/workspace/outputs/ teamname:latest /bin/bash -c "sh predict.sh"
-```
+## Acknowledgement
 
-- `--gpus`: specify the available GPU during inference
-- `-m`: spedify the maximum RAM
-- `--name`: container name during running
-- `--rm`: remove the container after running
-- `-v $PWD/CellSeg_Test/:/workspace/inputs/`: map local image data folder to Docker `workspace/inputs` folder.
-- `-v $PWD/teamname_seg/:/workspace/outputs/ `: map Docker `workspace/outputs` folder to local folder. The segmentation results will be in `$PWD/teamname_outputs`
-- `teamname:latest`: docker image name (should be `teamname`) and its version tag. **The version tag should be `latest`**. Please do not use `v0`, `v1`... as the version tag
-- `/bin/bash -c "sh predict.sh"`: start the prediction command. It will load testing images from `workspace/inputs` and save the segmentation results to `workspace/outputs`
-
-Assuming the team name is `baseline`, the Docker build command is
-
-```shell
-docker build -t baseline . 
-```
-
-Test the docker to make sure it works. There should be segmentation results in the `baseline_seg` folder.
-
-```bash
-docker container run --gpus "device=0" -m 28G --name baseline --rm -v $PWD/TuningSet/:/workspace/inputs/ -v $PWD/baseline_seg/:/workspace/outputs/ baseline:latest /bin/bash -c "sh predict.sh"
-```
-
-> During the inference, please monitor the GPU memory consumption using `watch nvidia-smi`. The GPU memory consumption should be less than 10G. Otherwise, it will run into an OOM error on the official evaluation server. 
-
-### 3) Save Docker
-
-```shell
-docker save baseline | gzip -c > baseline.tar.gz
-```
-
-Upload the docker to Google drive ([example](https://drive.google.com/file/d/1CQRP6yvv9le7m8k7PI_CR6iZAo4vVTt8/view?usp=sharing)) or Baidu net disk ([example]()) and send the download link to `NeurIPS.CellSeg@gmail.com`.
-
-> Please **do not** upload the Docker to dockerhub!
-
-## Limitations and potential improvements
-
-The naive baseline's primary aim is to give participants out-of-the-box scripts that can generate successful submisions. Thus, there are many ways to surpass this baseline:
-
-- New cell representation methods. In the baseline, we separated touching cells by simply removing their boundaries. More advanced cell representation could be used to address this issue, such as [stardist](https://github.com/stardist/stardist), [cellpose](https://github.com/MouseLand/cellpose), [omnipose](https://github.com/kevinjohncutler/omnipose), [deepcell](https://github.com/vanvalenlab/deepcell-tf), and so on.
-- New architectures
-- More data augmentations and the use of additional [public datasets](https://grand-challenge.org/forums/forum/weakly-supervised-cell-segmentation-in-multi-modality-microscopy-673/topic/official-external-datasets-thread-720/) or the set of unlabeled data provided.
-- Well-designed training protocols
-- Postprocessing
-
-## Extension
-
-- [Napari plugin](https://git.linhan.ml/linhandev/monai-app)
-- [MONAI APP](https://github.com/YaoZhang93/napari-cellseg)
+> We thank the contributors of public datasets.
+> Thanks to [Cellpose](https://github.com/MouseLand/cellpose) and [Tachi](https://github.com/taichi-dev/taichi).

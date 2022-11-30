@@ -23,16 +23,16 @@ class RGB(nn.Module):
         return (x - self.mean) / self.std
 
 
-class DaFormerCoATNet_GRAD_V3(nn.Module):
+class DaFormaerCoATNet_GRAD_V3_N(nn.Module):
 
     def __init__(self,
                  in_channel=3,
                  out_channel=4,
                  encoder=coat_lite_medium,
                  encoder_pretrain='coat_lite_medium_384x384_f9129688.pth',
-                 decoder=daformer_involution,
+                 decoder=daformer_conv3x3,
                  decoder_dim=320):
-        super(DaFormerCoATNet_GRAD_V3, self).__init__()
+        super(DaFormaerCoATNet_GRAD_V3_N, self).__init__()
 
         assert out_channel > 3
         # channel0: in prob

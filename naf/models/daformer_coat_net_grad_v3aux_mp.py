@@ -23,7 +23,7 @@ class RGB(nn.Module):
         return (x - self.mean) / self.std
 
 
-class DaFormerCoATNet_GRAD_V3(nn.Module):
+class DaFormaerCoATNet_GRAD_V3_AUX(nn.Module):
 
     def __init__(self,
                  in_channel=3,
@@ -32,7 +32,7 @@ class DaFormerCoATNet_GRAD_V3(nn.Module):
                  encoder_pretrain='coat_lite_medium_384x384_f9129688.pth',
                  decoder=daformer_involution,
                  decoder_dim=320):
-        super(DaFormerCoATNet_GRAD_V3, self).__init__()
+        super(DaFormaerCoATNet_GRAD_V3_AUX, self).__init__()
 
         assert out_channel > 3
         # channel0: in prob
@@ -50,15 +50,30 @@ class DaFormerCoATNet_GRAD_V3(nn.Module):
             encoder_dim=encoder_dim,
             decoder_dim=decoder_dim,
         )
+        # self.logit = nn.Sequential(
+        #     nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
+        #     nn.BatchNorm2d(decoder_dim),
+        #     PixelShuffleBlock(decoder_dim, out_channel - 2, upscale_factor=4),
+        #     nn.BatchNorm2d(out_channel - 2),
+        # )
+        
         self.logit = nn.Sequential(
             nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
             nn.BatchNorm2d(decoder_dim),
-            PixelShuffleBlock(decoder_dim, out_channel - 2, upscale_factor=4),
-            nn.BatchNorm2d(out_channel - 2),
+            
         )
+        
+        self.logit_up = nn.Sequential(
+            PixelShuffleBlock(decoder_dim, out_channel - 2, upscale_factor=4),
+            nn.BatchNorm2d(out_channel - 2)
+        )
+        
         self.grad_conv = nn.Sequential(
             nn.Conv2d(decoder_dim, decoder_dim, kernel_size=3, padding=1),
-            nn.BatchNorm2d(decoder_dim),
+            nn.BatchNorm2d(decoder_dim)
+        )
+        
+        self.grad_conv_up = nn.Sequential(
             PixelShuffleBlock(decoder_dim, 2, upscale_factor=4),
             nn.BatchNorm2d(2)
         )
@@ -106,8 +121,11 @@ class DaFormerCoATNet_GRAD_V3(nn.Module):
 
         last, decode_info = self.decoder(latent)
 
-        logit = self.logit(last)
-        grads = self.grad_conv(last)
+        logit_ = self.logit(last)
+        grads_ = self.grad_conv(last)
+        
+        logit = self.logit_up(logit_)
+        grads = self.grad_conv_up(grads_ * logit_)
 
         out = torch.cat([logit, grads], dim=1)
 
