@@ -179,3 +179,21 @@ cython_debug/
 /data/Train_Pre_sdf_aug1/
 /data/Train_Pre_Unlabeled/
 /naf/records/
+将删除 .idea/.gitignore
+将删除 .idea/NeurIPS-CellSeg.iml
+将删除 .idea/inspectionProfiles/
+将删除 .idea/misc.xml
+将删除 .idea/modules.xml
+将删除 .idea/vcs.xml
+将删除 baseline/outputs/
+将删除 data/Train_Pre_Datasets.zip
+将删除 naf/augment/cell_augment/gen/
+将删除 naf/augment/cell_augment/simulation_data_circle_small/
+将删除 naf/augment/cell_augment/simulation_data_stripe_mid/
+将删除 naf/augment/cell_augment/simulation_data_stripe_small/
+将删除 naf/best_model/
+将删除 naf/misc/test_datas/
+将删除 naf/model_training_grad_3class.py
+将删除 naf/models/PretrainedModel/
+将删除 naf/performance_testing/
+将删除 naf/transforms/results/
