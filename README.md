@@ -5,7 +5,7 @@ This repository is the official implementation of [Watershed-enhanced cell insta
 ## Environments and Requirements
 
 - Ubuntu 18.04
-- CPU: intel 10900f; RAM: 128GB; GPU: 2080ti
+- CPU: i9 10900X; RAM: 128GB; GPU: 2080ti
 - CUDA 10.2
 - python 3.8
 - pytorch 1.12.0
